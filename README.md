@@ -8,9 +8,15 @@ Generate high-quality images using the [Z-Image-Turbo](https://huggingface.co/To
 
 Diffusion models generate images by starting from pure noise and gradually refining it into a coherent image. Think of it like sculpting — you start with a rough block and iteratively chip away until the form emerges.
 
-**The forward process** gradually adds noise to an image until it becomes random static. **The reverse process** learns to undo this — starting from noise and predicting what to remove at each step to recover the original image.
+**The forward process** (training only — not used during generation) gradually adds Gaussian noise to a clean image over many steps until it becomes pure random static. The model learns to predict the noise that was added at each step.
 
-Z-Image-Turbo uses a **flow-matching** variant of diffusion, which learns a direct path (vector field) from noise to data in fewer steps. Combined with **distillation** (Decoupled-DMD), it achieves high quality in just 8 steps instead of the typical 50+.
+**The reverse process** (what the script does during generation) starts from pure random noise — controlled by the `--seed` parameter — and at each step, the transformer predicts "what noise is left" and the scheduler removes it. After 8 steps (for Turbo), the latents are clean enough to decode into a final image via the VAE.
+
+```
+Random noise → Step 1 (remove some noise) → Step 2 → ... → Step 8 → Clean latents → VAE → Final image
+```
+
+Z-Image-Turbo uses a **flow-matching** variant of diffusion, which learns a direct path (vector field) from noise to data in fewer steps. Combined with **distillation** (Decoupled-DMD), it achieves high quality in just 8 steps instead of the typical 50+. The key insight of distillation is that the model learned to take **shortcuts** — instead of 50+ tiny steps, it makes 8 large jumps that land directly on a good image.
 
 **Key concepts:**
 
