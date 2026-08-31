@@ -1,6 +1,14 @@
-# Z-Image-Turbo FP8 Image Generator
+# Image Generation Toolkit
+
+Two diffusion model pipelines for text-to-image and image-to-image generation on Apple Silicon (MPS), CUDA, or CPU.
+
+## 1. Z-Image-Turbo — Text-to-Image (FP8, ~14.5GB)
 
 Generate high-quality images using the [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) model with an optimized download strategy — **~14.5GB** instead of ~33GB.
+
+## 2. Qwen-Image-Edit-2511 — Image-to-Image (~20GB)
+
+Restyle or transform an existing image using [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511). Provide a source image + a text instruction (e.g. *"turn it into a watercolor painting"*) and the model regenerates the image accordingly. Supports multiple input images for compositing.
 
 ## How It Works
 
@@ -278,12 +286,68 @@ Same as `image-gen.py`, plus:
 |------|-------------|
 | `--fp8` | Enable torchao FP8 quantization at runtime (CUDA with compute ≥8.9 only) |
 
+## Image-to-Image: Qwen-Image-Edit-2511
+
+### Usage
+
+```bash
+# Basic restyle
+python i2i-gen.py -i photo.png -p "turn it into a watercolor painting"
+
+# Multiple input images (compositing)
+python i2i-gen.py -i bear1.png bear2.png -p "both bears facing each other in a park" -o merged.png
+
+# With animation
+pip install imageio imageio-ffmpeg
+python i2i-gen-anim.py -i photo.png -p "make it anime style" --animation anim.mp4
+```
+
+### Options — i2i-gen.py
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i` / `--image` | *(required)* | One or more input image paths |
+| `-p` / `--prompt` | *(required)* | Editing/restyling instruction |
+| `-o` / `--output` | `output.png` | Output image path |
+| `--negative-prompt` | `" "` | Negative prompt |
+| `--steps` | `20` | Inference steps (fewer = faster) |
+| `--cfg` | `4.0` | True CFG scale |
+| `--guidance-scale` | `1.0` | Guidance scale |
+| `--seed` | `0` | Random seed |
+| `--num-images` | `1` | Number of images to generate |
+| `--device` | auto | Force `cuda`, `mps`, or `cpu` |
+
+### Options — i2i-gen-anim.py
+
+Same as `i2i-gen.py`, plus:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--animation` | `animation.mp4` | Output animation path |
+| `--fps` | `1` | Seconds per step (1 = 1s/step) |
+| `--smooth N` | `0` | Blend N intermediate frames between steps |
+
+### How the Animation Works
+
+The script captures the **packed latent tensor** after each denoising step via the pipeline's `callback_on_step_end` hook. To turn each latent into a viewable frame, three conversions are needed:
+
+1. **Unpack** — the transformer operates on packed latents `[1, num_patches, channels×4]` (2×2 patches flattened into the sequence). `pipe._unpack_latents()` restores them to spatial form `[1, 16, 1, h, w]`.
+2. **Decode** — the VAE decoder converts latents to pixels. The Qwen-Image VAE is a 3D video-style VAE that expects 5D input and outputs 5D `(batch, channels, frames, h, w)` — the frames dimension is squeezed out.
+3. **Post-process** — normalize to `[0, 1]`, convert to uint8, and collect as a frame.
+
+**Important:** the pipeline resizes the input image to ~1024×1024 area internally (e.g. a 3904×5184 photo becomes 1184×896 latents). The unpack step must use these *pipeline* dimensions, not the original image dimensions, or the reshape will fail.
+
+The final decoded image is appended as the last frame, then all frames are written to MP4 with `imageio`. With `--smooth N`, pixel-space blend frames are interpolated between steps for a gradual transition effect.
+
 ## Files
 
 | File | Description |
 |------|-------------|
-| `image-gen.py` | Main image generation script |
-| `image-gen-anim.py` | Image generation + step-by-step denoising animation |
+| `image-gen.py` | Text-to-image generation (Z-Image-Turbo) |
+| `image-gen-anim.py` | Text-to-image + denoising animation (Z-Image-Turbo) |
+| `i2i-gen.py` | Image-to-image restyling (Qwen-Image-Edit-2511) |
+| `i2i-gen-anim.py` | Image-to-image + denoising animation (Qwen-Image-Edit-2511) |
+| `requirements.txt` | Python dependencies |
 
 ## Scaling Up
 

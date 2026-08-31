@@ -1,0 +1,8 @@
+torch
+diffusers
+transformers
+accelerate
+sentencepiece
+pillow
+imageio
+imageio-ffmpeg
