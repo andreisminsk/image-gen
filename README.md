@@ -309,7 +309,7 @@ python i2i-gen-anim.py -i photo.png -p "make it anime style" --animation anim.mp
 | `-i` / `--image` | *(required)* | One or more input image paths |
 | `-p` / `--prompt` | *(required)* | Editing/restyling instruction |
 | `-o` / `--output` | `output.png` | Output image path |
-| `--negative-prompt` | `" "` | Negative prompt |
+| `--negative-prompt` | `" "` | Negative prompt — concepts to steer away from (see below) |
 | `--steps` | `20` | Inference steps (fewer = faster) |
 | `--cfg` | `4.0` | True CFG scale |
 | `--guidance-scale` | `1.0` | Guidance scale |
@@ -326,6 +326,27 @@ Same as `i2i-gen.py`, plus:
 | `--animation` | `animation.mp4` | Output animation path |
 | `--fps` | `1` | Seconds per step (1 = 1s/step) |
 | `--smooth N` | `0` | Blend N intermediate frames between steps |
+
+### How `--negative-prompt` Works
+
+With `--cfg` above 1 (default 4.0), the model runs each denoising step twice — once with your prompt, once with the negative prompt — then extrapolates *away* from the negative direction:
+
+```
+prediction = negative + cfg × (positive − negative)
+```
+
+The default `" "` (empty) just enables CFG without steering. Putting concepts in the negative prompt actively suppresses them:
+
+```bash
+python i2i-gen.py -i photo.png -p "a pirate on a harbor dock" \
+  --negative-prompt "ships, boats, disproportionate ship, weapon, sword, gun, pistol, knife, holding weapon"
+```
+
+**Tips:**
+- List concrete nouns — "weapon" alone is vague; naming sword/gun/pistol works better
+- Higher `--cfg` (5–6) strengthens suppression but can add artifacts; lower (2–3) weakens it
+- Phrase the positive prompt affirmatively too: *"a pirate standing on a harbor dock, empty hands, calm sea in the background, no ships"*
+- Negative prompts steer rather than guarantee — combine both approaches for best results
 
 ### How the Animation Works
 

@@ -43,6 +43,8 @@ def parse_args():
                    help="Number of images to generate (default: 1)")
     p.add_argument("--fps", type=int, default=1,
                    help="Seconds per step in animation (1 = 1 fps, default: 1)")
+    p.add_argument("--intro", type=int, default=10, metavar="N",
+                   help="Cross-fade N frames from a ghosted source image into the first denoising step (0 = disable, default: 10)")
     p.add_argument("--smooth", type=int, default=0, metavar="N",
                    help="Blend N intermediate frames between steps for smooth transitions")
     p.add_argument("--device", default=None,
@@ -172,6 +174,26 @@ def main():
 
     print("  Adding final image...")
     frames.append(np.array(output.images[0]))
+
+    # Ghosted source intro with cross-fade into first denoising frame
+    if args.intro > 0 and len(frames) > 0:
+        print(f"  Building ghost intro ({args.intro} fade frames)...")
+        # Resize source to pipeline output dimensions
+        source_resized = images[0].resize((img_w, img_h), Image.LANCZOS)
+        source_arr = np.array(source_resized)
+        # Convert to grayscale and blend with black at 30% opacity for ghost effect
+        gray = np.dot(source_arr[..., :3], [0.299, 0.587, 0.114]).astype(np.float32)
+        ghost = (gray * 0.3).round().astype(np.uint8)
+        ghost_rgb = np.stack([ghost, ghost, ghost], axis=-1)
+        # Cross-fade from ghost → first frame
+        first_frame = frames[0].astype(np.float32)
+        ghost_arr = ghost_rgb.astype(np.float32)
+        intro_frames = []
+        for t in range(args.intro):
+            alpha = t / args.intro
+            blended = ((1 - alpha) * ghost_arr + alpha * first_frame).round().astype(np.uint8)
+            intro_frames.append(blended)
+        frames = intro_frames + frames
 
     # Smooth interpolation
     if args.smooth > 0 and len(frames) > 1:
