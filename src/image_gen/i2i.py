@@ -1,12 +1,5 @@
-#!/usr/bin/env python3
-"""
-i2i-gen.py — Image-to-image generation/restyling using Qwen-Image-Edit-2511.
+"""Image-to-image restyling using Qwen-Image-Edit-2511."""
 
-Usage:
-    python i2i-gen.py --image photo.png --prompt "turn it into a watercolor painting"
-    python i2i-gen.py -i img1.png img2.png -p "merge both bears into a park scene" -o result.png
-    python i2i-gen.py -i input.jpg -p "make it anime style" --steps 30 --cfg 4.0 --seed 42
-"""
 import argparse
 import os
 import sys
@@ -16,34 +9,7 @@ from PIL import Image
 from diffusers import QwenImageEditPlusPipeline
 
 
-def parse_args():
-    p = argparse.ArgumentParser(
-        description="Restyle/regenerate images with Qwen-Image-Edit-2511"
-    )
-    p.add_argument("-i", "--image", nargs="+", required=True,
-                   help="One or more input image paths")
-    p.add_argument("-p", "--prompt", required=True,
-                   help="Editing/restyling instruction")
-    p.add_argument("-o", "--output", default="output.png",
-                   help="Output image path (default: output.png)")
-    p.add_argument("--negative-prompt", default=" ",
-                   help="Negative prompt (default: single space)")
-    p.add_argument("--steps", type=int, default=20,
-                   help="Number of inference steps (default: 20)")
-    p.add_argument("--cfg", type=float, default=4.0,
-                   help="True CFG scale (default: 4.0)")
-    p.add_argument("--guidance-scale", type=float, default=1.0,
-                   help="Guidance scale (default: 1.0)")
-    p.add_argument("--seed", type=int, default=0,
-                   help="Random seed (default: 0)")
-    p.add_argument("--num-images", type=int, default=1,
-                   help="Number of images to generate (default: 1)")
-    p.add_argument("--device", default=None,
-                   help="Force device: cuda, mps, or cpu (auto-detected if omitted)")
-    return p.parse_args()
-
-
-def pick_device(requested: str | None) -> str:
+def pick_device(requested=None):
     if requested:
         return requested
     if torch.cuda.is_available():
@@ -53,7 +19,7 @@ def pick_device(requested: str | None) -> str:
     return "cpu"
 
 
-def load_images(paths: list[str]) -> list[Image.Image]:
+def load_images(paths):
     images = []
     for path in paths:
         if not os.path.isfile(path):
@@ -68,7 +34,30 @@ def load_images(paths: list[str]) -> list[Image.Image]:
 
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser(
+        description="Restyle/regenerate images with Qwen-Image-Edit-2511"
+    )
+    parser.add_argument("-i", "--image", nargs="+", required=True,
+                        help="One or more input image paths")
+    parser.add_argument("-p", "--prompt", required=True,
+                        help="Editing/restyling instruction")
+    parser.add_argument("-o", "--output", default="output.png",
+                        help="Output image path (default: output.png)")
+    parser.add_argument("--negative-prompt", default=" ",
+                        help="Negative prompt (default: single space)")
+    parser.add_argument("--steps", type=int, default=20,
+                        help="Number of inference steps (default: 20)")
+    parser.add_argument("--cfg", type=float, default=4.0,
+                        help="True CFG scale (default: 4.0)")
+    parser.add_argument("--guidance-scale", type=float, default=1.0,
+                        help="Guidance scale (default: 1.0)")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Random seed (default: 0)")
+    parser.add_argument("--num-images", type=int, default=1,
+                        help="Number of images to generate (default: 1)")
+    parser.add_argument("--device", default=None,
+                        help="Force device: cuda, mps, or cpu (auto-detected if omitted)")
+    args = parser.parse_args()
 
     device = pick_device(args.device)
     print(f"Device: {device}")

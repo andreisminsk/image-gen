@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "image-gen"
+version = "1.0.0"
+description = "Diffusion model pipelines for text-to-image, image-to-image, and object removal"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+dependencies = [
+    "torch",
+    "torchvision",
+    "diffusers",
+    "transformers",
+    "accelerate",
+    "sentencepiece",
+    "pillow",
+    "imageio",
+    "imageio-ffmpeg",
+    "scipy",
+    "simple-lama-inpainting",
+    "safetensors",
+]
+
+[project.scripts]
+image-gen = "image_gen.gen:main"
+image-gen-anim = "image_gen.gen_anim:main"
+i2i-gen = "image_gen.i2i:main"
+i2i-gen-anim = "image_gen.i2i_anim:main"
+remove-object = "image_gen.remove:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

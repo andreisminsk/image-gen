@@ -1,4 +1,5 @@
 torch
+torchvision
 diffusers
 transformers
 accelerate
@@ -6,3 +7,6 @@ sentencepiece
 pillow
 imageio
 imageio-ffmpeg
+scipy
+simple-lama-inpainting
+safetensors

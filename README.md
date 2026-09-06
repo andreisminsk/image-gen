@@ -1,6 +1,6 @@
 # Image Generation Toolkit
 
-Two diffusion model pipelines for text-to-image and image-to-image generation on Apple Silicon (MPS), CUDA, or CPU.
+Three diffusion model pipelines for text-to-image, image-to-image, and object removal on Apple Silicon (MPS), CUDA, or CPU.
 
 ## 1. Z-Image-Turbo — Text-to-Image (FP8, ~14.5GB)
 
@@ -200,19 +200,19 @@ pip install transformers accelerate sentencepiece
 ### Basic (FP8, smaller download)
 
 ```bash
-python image-gen.py "A cat astronaut on the moon"
+image-gen "A cat astronaut on the moon"
 ```
 
 ### Full BF16 Model (33GB download, best quality)
 
 ```bash
-python image-gen.py "A cat astronaut on the moon" --full-model
+image-gen "A cat astronaut on the moon" --full-model
 ```
 
 ### With Options
 
 ```bash
-python image-gen.py "A sunset over mountains" \
+image-gen "A sunset over mountains" \
   --seed 123 \
   --output sunset.png \
   --width 768 \
@@ -225,11 +225,11 @@ python image-gen.py "A sunset over mountains" \
 ```bash
 pip install imageio imageio-ffmpeg  # extra dependency for video
 
-python image-gen-anim.py "A cat astronaut on the moon"
+image-gen-anim "A cat astronaut on the moon"
 # Produces: output.png + animation.mp4
 
 # Customize animation:
-python image-gen-anim.py "A sunset over mountains" \
+image-gen-anim "A sunset over mountains" \
   --output sunset.png \
   --animation sunset_anim.mp4 \
   --fps 2
@@ -237,7 +237,7 @@ python image-gen-anim.py "A sunset over mountains" \
 
 Each denoising step is shown for 1 second (adjustable with `--fps`). The animation reveals how the model progressively refines noise into a coherent image.
 
-### All Options — image-gen.py
+### All Options — image-gen
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -270,9 +270,9 @@ Fewer steps skip parts of the learned noise-to-image trajectory, producing incom
 | `--device` | auto | Force device: `cuda`, `mps`, or `cpu` |
 | `--full-model` | `False` | Download full BF16 model (~33GB) instead of FP8 (~14.5GB) |
 
-### All Options — image-gen-anim.py
+### All Options — image-gen-anim
 
-Same as `image-gen.py`, plus:
+Same as `image-gen`, plus:
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -292,17 +292,17 @@ Same as `image-gen.py`, plus:
 
 ```bash
 # Basic restyle
-python i2i-gen.py -i photo.png -p "turn it into a watercolor painting"
+i2i-gen -i photo.png -p "turn it into a watercolor painting"
 
 # Multiple input images (compositing)
-python i2i-gen.py -i bear1.png bear2.png -p "both bears facing each other in a park" -o merged.png
+i2i-gen -i bear1.png bear2.png -p "both bears facing each other in a park" -o merged.png
 
 # With animation
 pip install imageio imageio-ffmpeg
-python i2i-gen-anim.py -i photo.png -p "make it anime style" --animation anim.mp4
+i2i-gen-anim -i photo.png -p "make it anime style" --animation anim.mp4
 ```
 
-### Options — i2i-gen.py
+### Options — i2i-gen
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -317,9 +317,9 @@ python i2i-gen-anim.py -i photo.png -p "make it anime style" --animation anim.mp
 | `--num-images` | `1` | Number of images to generate |
 | `--device` | auto | Force `cuda`, `mps`, or `cpu` |
 
-### Options — i2i-gen-anim.py
+### Options — i2i-gen-anim
 
-Same as `i2i-gen.py`, plus:
+Same as `i2i-gen`, plus:
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -338,7 +338,7 @@ prediction = negative + cfg × (positive − negative)
 The default `" "` (empty) just enables CFG without steering. Putting concepts in the negative prompt actively suppresses them:
 
 ```bash
-python i2i-gen.py -i photo.png -p "a pirate on a harbor dock" \
+i2i-gen -i photo.png -p "a pirate on a harbor dock" \
   --negative-prompt "ships, boats, disproportionate ship, weapon, sword, gun, pistol, knife, holding weapon"
 ```
 
@@ -360,15 +360,106 @@ The script captures the **packed latent tensor** after each denoising step via t
 
 The final decoded image is appended as the last frame, then all frames are written to MP4 with `imageio`. With `--smooth N`, pixel-space blend frames are interpolated between steps for a gradual transition effect.
 
+## Object Removal: Segment → Select → Inpaint
+
+### Overview
+
+`remove-object` removes unwanted objects from photos in three stages:
+
+1. **Segmentation** — detect object masks using Mask R-CNN (default, detects people) or SAM (point/grid prompts)
+2. **Mask selection** — pick the best mask via CLIP semantic matching, manual `--mask-index`, or area/IoU fallback
+3. **Inpainting** — fill the masked region using SDXL (context-aware, slower) or LaMa (fast, no hallucination)
+
+### Usage
+
+```bash
+# Dry run — detect and save the mask only (no inpainting)
+remove-object -i photo.jpg -p "man in blue"
+
+# Full removal with LaMa (fast, no hallucination)
+remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter lama
+
+# Full removal with SDXL (context-aware, slower)
+remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter sdxl
+
+# SAM with point prompt
+remove-object -i photo.jpg -p "person" --point 700,512 --inpaint
+
+# SDXL with custom fill prompt (describe what should replace the object)
+remove-object -i photo.jpg -p "man in blue" --inpaint --inpainter sdxl --inpaint-prompt "clear blue sky"
+```
+
+### How It Works
+
+**Segmentation** produces candidate masks:
+
+- **Mask R-CNN** (`--maskrcnn`, default) — detects COCO person instances. For small/distant figures where the mask misses limbs, it automatically fills the bounding box if mask coverage < 60%.
+- **SAM** (`--sam`) — Segment Anything Model. With `--point x,y`, segments the object near that point. Without a point, uses a 3×3 grid to auto-segment the scene.
+
+**Mask selection** picks the best candidate:
+
+- **CLIP** (default) — scores each masked region against the text prompt and picks the best semantic match. This ensures the mask corresponds to what you described, not just the largest object.
+- **`--mask-index N`** — manual override, pick the Nth mask directly.
+- **`--no-clip --prefer area|iou`** — skip CLIP and fall back to largest area or highest IoU.
+
+**Inpainting** fills the hole:
+
+- **SDXL** (`--inpainter sdxl`, default) — Stable Diffusion XL inpainting. Context-aware, can hallucinate realistic content. Use `--inpaint-prompt` to describe what should fill the hole (leave empty to infer from surroundings). ⚠️ Do **not** pass the removal prompt here — that would regenerate the object you're trying to remove.
+- **LaMa** (`--inpainter lama`) — Large Mask Inpainting. Fast, no hallucination, good for clean removals. Supports `--dilate` to expand the mask for better coverage.
+
+**Mask post-processing** — holes in the mask interior are filled via border flood-fill, and a red overlay preview is saved alongside the binary mask.
+
+### Options — remove-object
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i` / `--image` | *(required)* | Input image path |
+| `-p` / `--prompt` | *(required)* | Text description of object to remove |
+| `-o` / `--output` | *(input dir)* | Output directory |
+| `--point` | None | `x,y` point prompt for SAM |
+| `--mask-index` | None | Force a specific mask (0-based) |
+| `--max-dim` | `1024` | Downscale longest side |
+| `--no-clip` | `False` | Skip CLIP, use area/IoU fallback |
+| `--prefer` | `area` | Fallback mode: `area` or `iou` |
+| `--sam` | `False` | Use SAM instead of Mask R-CNN |
+| `--all-classes` | `False` | Mask R-CNN: detect all COCO classes |
+| `--inpaint` | `False` | Run inpainting after segmentation |
+| `--inpainter` | `sdxl` | Inpainting model: `sdxl` or `lama` |
+| `--inpaint-prompt` | `""` | What to fill the hole with (SDXL only) |
+| `--inpaint-model` | `diffusers/stable-diffusion-xl-1.0-inpainting-0.1` | SDXL model ID |
+| `--steps` | `30` | SDXL inference steps |
+| `--guidance-scale` | `3.0` | SDXL guidance scale |
+| `--feather` | `8` | Mask feather radius (px) |
+| `--dilate` | `10` | LaMa mask dilation (px) |
+| `--seed` | `42` | Random seed for SDXL |
+| `--device` | auto | Force `cuda`, `mps`, or `cpu` |
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+This installs five console commands: `image-gen`, `image-gen-anim`, `i2i-gen`, `i2i-gen-anim`, `remove-object`.
+
+You can also run modules directly without installing:
+
+```bash
+python -m image_gen.gen "A cat on the moon"
+python -m image_gen.remove -i photo.jpg -p "person" --inpaint
+```
+
 ## Files
 
-| File | Description |
-|------|-------------|
-| `image-gen.py` | Text-to-image generation (Z-Image-Turbo) |
-| `image-gen-anim.py` | Text-to-image + denoising animation (Z-Image-Turbo) |
-| `i2i-gen.py` | Image-to-image restyling (Qwen-Image-Edit-2511) |
-| `i2i-gen-anim.py` | Image-to-image + denoising animation (Qwen-Image-Edit-2511) |
-| `requirements.txt` | Python dependencies |
+| File | Command | Description |
+|------|---------|-------------|
+| `src/image_gen/gen.py` | `image-gen` | Text-to-image generation (Z-Image-Turbo) |
+| `src/image_gen/gen_anim.py` | `image-gen-anim` | Text-to-image + denoising animation (Z-Image-Turbo) |
+| `src/image_gen/i2i.py` | `i2i-gen` | Image-to-image restyling (Qwen-Image-Edit-2511) |
+| `src/image_gen/i2i_anim.py` | `i2i-gen-anim` | Image-to-image + denoising animation (Qwen-Image-Edit-2511) |
+| `src/image_gen/remove.py` | `remove-object` | Prompt-driven object removal (segment → select → inpaint) |
+| `pyproject.toml` | | Package config and entry points |
+| `requirements.txt` | | Python dependencies (for pip install without package) |
 
 ## Scaling Up
 
@@ -385,6 +476,8 @@ The final decoded image is appended as the last frame, then all frames are writt
 - **CUDA OOM** — Use `--fp8`, reduce resolution to `768x768`, or add `pipe.enable_model_cpu_offload()` in the script
 - **MPS OOM** — Reduce resolution to `768x768`. The full pipeline loads in float32 on MPS (~28GB). If still OOM, try `--device cpu` (very slow but works).
 - **Slow first run** — Normal; model weights are downloaded and cached in `~/.cache/huggingface/`
+- **`SimpleLama not found`** — Install: `pip install simple-lama-inpainting` (only needed for `--inpainter lama`)
+- **`No module named 'torchvision'`** — Install: `pip install torchvision` (needed for Mask R-CNN segmentation)
 - **torchao warnings** — Harmless; torchao is not used on MPS/CPU
 
 ## License

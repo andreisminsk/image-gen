@@ -1,14 +1,9 @@
-"""
-Z-Image-Turbo Animation Generator
-
-Same as generate.py, but also produces an MP4 video showing
-each denoising step for 1 second.
-
-Requirements (same as generate.py, plus):
-  pip install imageio imageio-ffmpeg
-"""
+"""Z-Image-Turbo animation generator — text-to-image with step-by-step MP4."""
 
 import argparse
+from datetime import datetime
+
+import numpy as np
 import torch
 from diffusers import (
     ZImagePipeline,
@@ -17,48 +12,26 @@ from diffusers import (
     FlowMatchEulerDiscreteScheduler,
 )
 from transformers import Qwen3Model, Qwen2Tokenizer
-import numpy as np
-
-# ── CLI ──
-parser = argparse.ArgumentParser(description="Z-Image-Turbo animation generator")
-parser.add_argument("prompt", help="Text prompt for image generation")
-parser.add_argument("--negative-prompt", default="", help="Negative prompt (unused for Turbo)")
-parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (default: auto from datetime)")
-parser.add_argument("--height", type=int, default=1024, help="Image height")
-parser.add_argument("--width", type=int, default=1024, help="Image width")
-parser.add_argument("--steps", type=int, default=9, help="Inference steps (9 = 8 DiT forwards)")
-parser.add_argument("--output", default="output.png", help="Output image path")
-parser.add_argument("--animation", default="animation.mp4", help="Output animation path")
-parser.add_argument("--fps", type=int, default=1, help="Seconds per step in animation (1 = 1 fps)")
-parser.add_argument("--smooth", type=int, default=0, metavar="N",
-                    help="Blend N intermediate frames between each step for smooth transitions (pixel-space)")
-parser.add_argument("--device", default=None, help="Force device: cuda, mps, or cpu")
-parser.add_argument("--full-model", action="store_true",
-                    help="Download full BF16 model (~33GB) instead of FP8 (~14.5GB)")
-args = parser.parse_args()
-
-# ── Device detection ──
-if args.device:
-    device = torch.device(args.device)
-elif torch.cuda.is_available():
-    device = torch.device("cuda")
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    device = torch.device("mps")
-else:
-    device = torch.device("cpu")
-
-# ── Dtype ──
-# MPS: float32 is most stable; float16 can produce NaN with FP8 weights
-# CUDA: bfloat16 for best quality, float16 as fallback
-if device.type == "mps":
-    dtype = torch.float32
-elif device.type == "cpu":
-    dtype = torch.float32
-else:
-    dtype = torch.bfloat16
+from PIL import Image
 
 ORIG_REPO = "Tongyi-MAI/Z-Image-Turbo"
 FP8_REPO = "T5B/Z-Image-Turbo-FP8"
+
+
+def pick_device(requested=None):
+    if requested:
+        return torch.device(requested)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def pick_dtype(device):
+    if device.type in ("mps", "cpu"):
+        return torch.float32
+    return torch.bfloat16
 
 
 def load_fp8_pipeline(dtype, device):
@@ -115,33 +88,44 @@ def load_full_pipeline(dtype, device):
 
 def latent_to_pil(latents, vae, device):
     """Decode a latent tensor to a PIL image."""
-    # Ensure latents are on the same device as VAE
     latents = latents.to(device=device, dtype=vae.dtype)
     with torch.no_grad():
         image = vae.decode(latents).sample
     image = (image / 2 + 0.5).clamp(0, 1)
     image = image.cpu().permute(0, 2, 3, 1).float().numpy()
     image = (image[0] * 255).round().astype(np.uint8)
-    from PIL import Image
     return Image.fromarray(image)
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Z-Image-Turbo animation generator")
+    parser.add_argument("prompt", help="Text prompt for image generation")
+    parser.add_argument("--negative-prompt", default="", help="Negative prompt (unused for Turbo)")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (default: auto from datetime)")
+    parser.add_argument("--height", type=int, default=1024, help="Image height")
+    parser.add_argument("--width", type=int, default=1024, help="Image width")
+    parser.add_argument("--steps", type=int, default=9, help="Inference steps (9 = 8 DiT forwards)")
+    parser.add_argument("--output", default="output.png", help="Output image path")
+    parser.add_argument("--animation", default="animation.mp4", help="Output animation path")
+    parser.add_argument("--fps", type=int, default=1, help="Seconds per step in animation (1 = 1 fps)")
+    parser.add_argument("--smooth", type=int, default=0, metavar="N",
+                        help="Blend N intermediate frames between each step for smooth transitions (pixel-space)")
+    parser.add_argument("--device", default=None, help="Force device: cuda, mps, or cpu")
+    parser.add_argument("--full-model", action="store_true",
+                        help="Download full BF16 model (~33GB) instead of FP8 (~14.5GB)")
+    args = parser.parse_args()
+
+    device = pick_device(args.device)
+    dtype = pick_dtype(device)
+
     if args.full_model:
         pipe = load_full_pipeline(dtype, device)
     else:
         pipe = load_fp8_pipeline(dtype, device)
 
-    # ── Memory management ──
-    # Sequential CPU offloading is CUDA-only; on MPS/CPU load entire pipeline
-    if device.type == "cuda":
-        pipe.to(device)
-    else:
-        pipe.to(device)
+    pipe.to(device)
 
-    # ── Seed ──
     if args.seed is None:
-        from datetime import datetime
         args.seed = int(datetime.now().strftime("%Y%m%d%H%M%S"))
         print(f"Auto seed: {args.seed}")
 
@@ -150,16 +134,14 @@ def main():
 
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
 
-    # ── Collect intermediate latents via callback ──
+    # Collect intermediate latents via callback
     intermediate_latents = []
 
     def save_intermediate(pipe, step_index, timestep, callback_kwargs):
-        """Called after each denoising step — save the latent."""
         latents = callback_kwargs["latents"]
         intermediate_latents.append(latents.detach().clone())
         return callback_kwargs
 
-    # ── Generate ──
     print("Running transformer denoising steps...")
     image = pipe(
         prompt=args.prompt,
@@ -175,10 +157,8 @@ def main():
     image.save(args.output)
     print(f"✅ Saved image to {args.output}")
 
-    # ── Build animation ──
+    # Build animation
     print(f"Building animation from {len(intermediate_latents)} steps...")
-
-    # Determine which device VAE is on for decoding
     vae_device = next(pipe.vae.parameters()).device
 
     frames = []
@@ -187,11 +167,10 @@ def main():
         pil_image = latent_to_pil(latents, pipe.vae, vae_device)
         frames.append(np.array(pil_image))
 
-    # Add the final decoded image (already produced by the VAE)
-    print(f"  Adding final image...")
+    print("  Adding final image...")
     frames.append(np.array(image))
 
-    # ── Smooth interpolation (pixel-space blending) ──
+    # Smooth interpolation (pixel-space blending)
     if args.smooth > 0 and len(frames) > 1:
         n = args.smooth
         print(f"  Interpolating {n} blend frames between each step...")
@@ -207,13 +186,12 @@ def main():
         frames = smooth_frames
         print(f"  Total frames: {len(frames)} ({len(frames) // args.fps}s at {args.fps} fps)")
 
-    # ── Write MP4 ──
+    # Write MP4
     import imageio
 
     fps = args.fps
 
     if args.smooth > 0:
-        # Smooth mode: play 10x faster — write all frames at higher fps
         video_fps = fps * 10
         imageio.mimwrite(
             args.animation,
@@ -224,7 +202,6 @@ def main():
         )
         total_seconds = len(frames) / video_fps
     else:
-        # Default: each step shown for 1/fps seconds; repeat frames to fill
         repeated_frames = []
         for frame in frames:
             repeated_frames.extend([frame] * fps)
@@ -235,7 +212,7 @@ def main():
             codec="libx264",
             output_params=["-pix_fmt", "yuv420p"],
         )
-        total_seconds = len(repeated_frames) // fps
+        total_seconds = len(repeated_frames) / fps
 
     print(f"✅ Saved animation to {args.animation} ({len(frames)} frames, {total_seconds:.1f}s)")
 
