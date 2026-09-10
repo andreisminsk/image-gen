@@ -449,6 +449,28 @@ python -m image_gen.gen "A cat on the moon"
 python -m image_gen.remove -i photo.jpg -p "person" --inpaint
 ```
 
+### Proxy Scripts (optional)
+
+After `pip install -e .`, you can create shell proxy scripts in `~/.local/bin` so the commands are available without activating the venv:
+
+```bash
+# macOS / Linux
+./install.sh
+
+# Windows PowerShell
+./install.ps1
+```
+
+This creates wrapper scripts for all five commands that point to the venv executables. To remove them:
+
+```bash
+# macOS / Linux
+./uninstall.sh
+
+# Windows PowerShell
+./uninstall.ps1
+```
+
 ## Files
 
 | File | Command | Description |
