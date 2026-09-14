@@ -28,8 +28,18 @@ RUN pip install --no-cache-dir -e .
 # Uncomment to include models in the image:
 # RUN python -c "from huggingface_hub import hf_hub_download; \
 #     hf_hub_download('T5B/Z-Image-Turbo-FP8', 'z-image-turbo-fp8-e4m3fn.safetensors')" && \
-#     python -c "from diffusers import ZImagePipeline; ZImagePipeline.from_pretrained('Tongyi-MAI/Z-Image-Turbo')" && \
-#     python -c "from diffusers import QwenImageEditPlusPipeline; QwenImageEditPlusPipeline.from_pretrained('Qwen/Qwen-Image-Edit-2511')"
+#     python -c "from transformers import Qwen2Tokenizer, Qwen3Model; from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler; \
+#     Qwen2Tokenizer.from_pretrained('Tongyi-MAI/Z-Image-Turbo', subfolder='tokenizer'); \
+#     Qwen3Model.from_pretrained('Tongyi-MAI/Z-Image-Turbo', subfolder='text_encoder'); \
+#     AutoencoderKL.from_pretrained('Tongyi-MAI/Z-Image-Turbo', subfolder='vae'); \
+#     FlowMatchEulerDiscreteScheduler.from_pretrained('Tongyi-MAI/Z-Image-Turbo', subfolder='scheduler')" && \
+#     python -c "from huggingface_hub import hf_hub_download; \
+#     hf_hub_download('drbaph/Qwen-Image-Edit-2511-FP8', 'qwen_image_edit_2511_fp8_e4m3fn.safetensors')" && \
+#     python -c "from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor; from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler; \
+#     Qwen2_5_VLForConditionalGeneration.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='text_encoder'); \
+#     AutoencoderKLQwenImage.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='vae'); \
+#     AutoProcessor.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='processor'); \
+#     FlowMatchEulerDiscreteScheduler.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='scheduler')"
 
 # Default output directory
 RUN mkdir -p /app/output

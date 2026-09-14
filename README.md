@@ -6,9 +6,11 @@ Three diffusion model pipelines for text-to-image, image-to-image, and object re
 
 Generate high-quality images using the [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) model with an optimized download strategy — **~14.5GB** instead of ~33GB.
 
-## 2. Qwen-Image-Edit-2511 — Image-to-Image (~20GB)
+## 2. Qwen-Image-Edit-2511 — Image-to-Image (FP8, ~37GB)
 
 Restyle or transform an existing image using [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511). Provide a source image + a text instruction (e.g. *"turn it into a watercolor painting"*) and the model regenerates the image accordingly. Supports multiple input images for compositing.
+
+Uses an [FP8-quantized transformer](https://huggingface.co/drbaph/Qwen-Image-Edit-2511-FP8) (~20GB) plus the original text encoder, VAE, tokenizer, and scheduler (~17GB) — **~37GB total** instead of ~57GB for the full BF16 model. Use `--full-model` to download the full BF16 version instead.
 
 ## How It Works
 
@@ -170,8 +172,24 @@ The model uses a **single-stream DiT** (S3-DiT) architecture where text and imag
 
 - **Python 3.10+**
 - **NVIDIA GPU** (CUDA) or **Apple Silicon** (MPS) or **CPU** (very slow)
-- **16GB+ RAM** (MPS/CPU) or **10GB+ VRAM** (CUDA with FP8)
 - **Git** (for installing diffusers from source)
+
+### VRAM Requirements
+
+| Pipeline | VRAM (FP8) | VRAM (Full BF16) | Notes |
+|----------|-----------|-------------------|-------|
+| `image-gen` (Z-Image-Turbo) | ~10 GB | ~20 GB | 6B transformer + 3.4B text encoder |
+| `image-gen-anim` (Z-Image-Turbo) | ~10 GB | ~20 GB | Same + VAE decode per step |
+| `i2i-gen` (Qwen-Image-Edit-2511) | ~24 GB | ~40 GB | 20B transformer + 8B text encoder |
+| `i2i-gen-anim` (Qwen-Image-Edit-2511) | ~24 GB | ~40 GB | Same + VAE decode per step |
+| `remove-object` (SDXL inpainting) | ~8 GB | ~8 GB | SDXL inpainting model |
+| `remove-object` (LaMa inpainting) | ~2 GB | ~2 GB | Lightweight, no GPU needed |
+
+**Recommended GPUs:**
+- **FP8 text-to-image**: RTX 3090/4090 (24GB) or A10G (24GB)
+- **FP8 image-to-image**: RTX 3090/4090 (24GB) or A100 (40GB)
+- **Full BF16 image-to-image**: A100 (80GB) or 2× A100 (40GB)
+- **MPS (Apple Silicon)**: 32GB+ unified memory for text-to-image; image-to-image not recommended (loads as float32)
 
 ## Environment Setup
 
@@ -497,7 +515,7 @@ docker compose up -d
 docker compose exec image-gen image-gen "A cat on the moon" --seed 42
 ```
 
-The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~20GB for Qwen-Image-Edit). To pre-bake models into the image (~35GB larger), uncomment the pre-download section in the Dockerfile.
+The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~37GB for Qwen-Image-Edit). To pre-bake models into the image (~52GB larger), uncomment the pre-download section in the Dockerfile.
 
 CI builds and pushes to `ghcr.io/andreisminsk/image-gen` on every push to `main`.
 
@@ -538,7 +556,7 @@ The script:
 1. Installs system dependencies (ffmpeg)
 2. Sets up a conda env or venv
 3. Installs the `image-gen` package
-4. Pre-downloads all model weights (~35GB: Z-Image-Turbo FP8 + Qwen-Image-Edit-2511)
+4. Pre-downloads all model weights (~52GB: Z-Image-Turbo FP8 + Qwen-Image-Edit-2511 FP8)
 
 Set `HF_TOKEN` before running for faster downloads:
 

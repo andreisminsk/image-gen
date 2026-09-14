@@ -1,4 +1,4 @@
-"""Image-to-image restyling with Qwen-Image-Edit-2511 + MP4 animation."""
+"""Image-to-image restyling with Qwen-Image-Edit-2511 (FP8) + MP4 animation."""
 
 import argparse
 import math
@@ -8,7 +8,16 @@ import sys
 import numpy as np
 import torch
 from PIL import Image
-from diffusers import QwenImageEditPlusPipeline
+from diffusers import (
+    QwenImageEditPlusPipeline,
+    QwenImageTransformer2DModel,
+    AutoencoderKLQwenImage,
+    FlowMatchEulerDiscreteScheduler,
+)
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, AutoProcessor
+
+ORIG_REPO = "Qwen/Qwen-Image-Edit-2511"
+FP8_REPO = "drbaph/Qwen-Image-Edit-2511-FP8"
 
 
 def pick_device(requested=None):
@@ -19,6 +28,12 @@ def pick_device(requested=None):
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def pick_dtype(device):
+    if device in ("mps", "cpu"):
+        return torch.float32
+    return torch.bfloat16
 
 
 def load_images(paths):
@@ -33,6 +48,62 @@ def load_images(paths):
         images.append(img)
         print(f"  loaded {path}  ({img.size[0]}×{img.size[1]})")
     return images
+
+
+def load_fp8_pipeline(dtype, device):
+    """Load pipeline with FP8 transformer (~37GB download)."""
+    print("Loading tokenizer...")
+    tokenizer = Qwen2Tokenizer.from_pretrained(ORIG_REPO, subfolder="tokenizer")
+
+    print("Loading processor...")
+    processor = AutoProcessor.from_pretrained(ORIG_REPO, subfolder="processor")
+
+    print("Loading text encoder (~16.6GB)...")
+    text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        ORIG_REPO, subfolder="text_encoder", torch_dtype=dtype,
+    )
+
+    print("Loading VAE (~1GB)...")
+    vae = AutoencoderKLQwenImage.from_pretrained(
+        ORIG_REPO, subfolder="vae", torch_dtype=dtype,
+    )
+
+    print("Loading scheduler...")
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        ORIG_REPO, subfolder="scheduler",
+    )
+
+    print("Loading FP8 transformer (~20GB)...")
+    from huggingface_hub import hf_hub_download
+    fp8_path = hf_hub_download(
+        repo_id=FP8_REPO,
+        filename="qwen_image_edit_2511_fp8_e4m3fn.safetensors",
+    )
+    transformer = QwenImageTransformer2DModel.from_single_file(
+        fp8_path,
+        torch_dtype=dtype,
+    )
+
+    pipe = QwenImageEditPlusPipeline(
+        tokenizer=tokenizer,
+        processor=processor,
+        text_encoder=text_encoder,
+        vae=vae,
+        transformer=transformer,
+        scheduler=scheduler,
+    )
+    return pipe
+
+
+def load_full_pipeline(dtype, device):
+    """Load full BF16 pipeline (~57GB download)."""
+    print(f"Loading full model from {ORIG_REPO}...")
+    pipe = QwenImageEditPlusPipeline.from_pretrained(
+        ORIG_REPO,
+        torch_dtype=dtype,
+        low_cpu_mem_usage=True,
+    )
+    return pipe
 
 
 def latent_to_pil(latents, pipe, height, width, device):
@@ -82,20 +153,22 @@ def main():
                         help="Blend N intermediate frames between steps for smooth transitions")
     parser.add_argument("--device", default=None,
                         help="Force device: cuda, mps, or cpu (auto-detected if omitted)")
+    parser.add_argument("--full-model", action="store_true",
+                        help="Download full BF16 model (~57GB) instead of FP8 (~37GB)")
     args = parser.parse_args()
 
     device = pick_device(args.device)
+    dtype = pick_dtype(device)
     print(f"Device: {device}")
 
     print("Loading images...")
     images = load_images(args.image)
 
-    print("Loading Qwen-Image-Edit-2511 pipeline...")
-    dtype = torch.bfloat16 if device != "cpu" else torch.float32
-    pipe = QwenImageEditPlusPipeline.from_pretrained(
-        "Qwen/Qwen-Image-Edit-2511",
-        torch_dtype=dtype,
-    )
+    if args.full_model:
+        pipe = load_full_pipeline(dtype, device)
+    else:
+        pipe = load_fp8_pipeline(dtype, device)
+
     pipe.to(device)
     pipe.set_progress_bar_config(disable=None)
     print("Pipeline ready.\n")

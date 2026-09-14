@@ -94,11 +94,23 @@ FlowMatchEulerDiscreteScheduler.from_pretrained('Tongyi-MAI/Z-Image-Turbo', subf
 print('Z-Image-Turbo components downloaded.')
 "
 
-echo "  Downloading Qwen-Image-Edit-2511 (~20GB)..."
+echo "  Downloading Qwen-Image-Edit-2511 FP8 transformer (~20GB)..."
 ${PYTHON} -c "
-from diffusers import QwenImageEditPlusPipeline
-QwenImageEditPlusPipeline.from_pretrained('Qwen/Qwen-Image-Edit-2511')
-print('Qwen-Image-Edit-2511 downloaded.')
+from huggingface_hub import hf_hub_download
+hf_hub_download('drbaph/Qwen-Image-Edit-2511-FP8', 'qwen_image_edit_2511_fp8_e4m3fn.safetensors')
+print('FP8 transformer downloaded.')
+"
+
+echo "  Downloading Qwen-Image-Edit-2511 components (text encoder, VAE, tokenizer ~17GB)..."
+${PYTHON} -c "
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, AutoProcessor
+from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler
+Qwen2Tokenizer.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='tokenizer')
+AutoProcessor.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='processor')
+Qwen2_5_VLForConditionalGeneration.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='text_encoder')
+AutoencoderKLQwenImage.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='vae')
+FlowMatchEulerDiscreteScheduler.from_pretrained('Qwen/Qwen-Image-Edit-2511', subfolder='scheduler')
+print('Qwen-Image-Edit-2511 components downloaded.')
 "
 
 # --- Step 5: Done ---
@@ -120,7 +132,7 @@ echo ""
 echo "  Text-to-image with animation:"
 echo "    image-gen-anim 'A cat astronaut on the moon' --seed 42 --output output.png --animation animation.mp4"
 echo ""
-echo "  Image-to-image restyling (~20GB):"
+echo "  Image-to-image restyling (FP8, ~37GB):"
 echo "    i2i-gen -i photo.jpg -p 'turn it into a watercolor painting' --seed 42"
 echo ""
 echo "  Image-to-image with animation:"
