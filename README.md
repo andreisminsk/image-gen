@@ -471,6 +471,89 @@ This creates wrapper scripts for all five commands that point to the venv execut
 ./uninstall.ps1
 ```
 
+## Docker
+
+A Docker image is available for CUDA GPU environments (RunPod, cloud instances, etc.):
+
+```bash
+# Build
+docker build -t ghcr.io/andreisminsk/image-gen:1.0.0-cu128 .
+
+# Run (GPU required)
+docker run --gpus all -v ./output:/app/output ghcr.io/andreisminsk/image-gen:1.0.0-cu128 \
+    image-gen "A cat astronaut on the moon" --seed 42
+
+# With HuggingFace token (optional — for higher download rate limits)
+docker run --gpus all -e HF_TOKEN=hf_xxx -v ./output:/app/output \
+    ghcr.io/andreisminsk/image-gen:1.0.0-cu128 image-gen "A cat on the moon"
+```
+
+Or with `docker-compose.yml`:
+
+```bash
+# Pass HF_TOKEN from your environment (optional)
+export HF_TOKEN=hf_xxx
+docker compose up -d
+docker compose exec image-gen image-gen "A cat on the moon" --seed 42
+```
+
+The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~20GB for Qwen-Image-Edit). To pre-bake models into the image (~35GB larger), uncomment the pre-download section in the Dockerfile.
+
+CI builds and pushes to `ghcr.io/andreisminsk/image-gen` on every push to `main`.
+
+## RunPod Deployment
+
+### Option A: Docker Image
+
+Use the pre-built Docker image on a RunPod PyTorch pod:
+
+1. Deploy a RunPod pod with the PyTorch template (A100 40GB+ recommended)
+2. Pull and run the image:
+
+```bash
+docker run --gpus all -d \
+    -e HF_TOKEN=hf_xxx \
+    -v /app/output:/app/output \
+    -v hf-cache:/root/.cache/huggingface \
+    ghcr.io/andreisminsk/image-gen:1.0.0-cu128
+```
+
+3. SSH in and run commands:
+
+```bash
+image-gen "A cat astronaut on the moon" --seed 42
+scp root@<pod>:/app/output/output.png ./
+```
+
+### Option B: Manual Setup (no Docker)
+
+Run `deploy_runpod.sh` on a fresh RunPod PyTorch pod to install everything from scratch:
+
+```bash
+git clone <repo-url> && cd image-gen
+bash deploy_runpod.sh
+```
+
+The script:
+1. Installs system dependencies (ffmpeg)
+2. Sets up a conda env or venv
+3. Installs the `image-gen` package
+4. Pre-downloads all model weights (~35GB: Z-Image-Turbo FP8 + Qwen-Image-Edit-2511)
+
+Set `HF_TOKEN` before running for faster downloads:
+
+```bash
+export HF_TOKEN=hf_xxx
+bash deploy_runpod.sh
+```
+
+After setup, activate the environment and run:
+
+```bash
+conda activate image-gen   # or: source .venv/bin/activate
+image-gen "A cat astronaut on the moon" --seed 42
+```
+
 ## Files
 
 | File | Command | Description |

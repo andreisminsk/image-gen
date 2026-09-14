@@ -1,0 +1,17 @@
+services:
+  image-gen:
+    build: .
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+    volumes:
+      - ./output:/app/output
+      - hf-cache:/root/.cache/huggingface
+
+volumes:
+  hf-cache:
