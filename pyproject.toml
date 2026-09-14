@@ -22,6 +22,7 @@ dependencies = [
     "scipy",
     "simple-lama-inpainting",
     "safetensors",
+    "gguf",
 ]
 
 [project.scripts]

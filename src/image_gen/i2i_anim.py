@@ -1,4 +1,4 @@
-"""Image-to-image restyling with Qwen-Image-Edit-2511 (FP8) + MP4 animation."""
+"""Image-to-image restyling with Qwen-Image-Edit-2511 (GGUF) + MP4 animation."""
 
 import argparse
 import math
@@ -17,7 +17,7 @@ from diffusers import (
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, AutoProcessor
 
 ORIG_REPO = "Qwen/Qwen-Image-Edit-2511"
-FP8_REPO = "drbaph/Qwen-Image-Edit-2511-FP8"
+GGUF_REPO = "unsloth/Qwen-Image-Edit-2511-GGUF"
 
 
 def pick_device(requested=None):
@@ -50,8 +50,8 @@ def load_images(paths):
     return images
 
 
-def load_fp8_pipeline(dtype, device):
-    """Load pipeline with FP8 transformer (~37GB download)."""
+def load_gguf_pipeline(dtype, device, quant="Q8_0"):
+    """Load pipeline with GGUF-quantized transformer (~38GB download)."""
     print("Loading tokenizer...")
     tokenizer = Qwen2Tokenizer.from_pretrained(ORIG_REPO, subfolder="tokenizer")
 
@@ -73,17 +73,23 @@ def load_fp8_pipeline(dtype, device):
         ORIG_REPO, subfolder="scheduler",
     )
 
-    print("Loading FP8 transformer (~20GB)...")
+    print(f"Loading GGUF transformer ({quant})...")
     from huggingface_hub import hf_hub_download
-    fp8_path = hf_hub_download(
-        repo_id=FP8_REPO,
-        filename="qwen_image_edit_2511_fp8_e4m3fn.safetensors",
+    from diffusers import GGUFQuantizationConfig
+    gguf_path = hf_hub_download(
+        repo_id=GGUF_REPO,
+        filename=f"qwen-image-edit-2511-{quant}.gguf",
     )
     transformer = QwenImageTransformer2DModel.from_single_file(
-        fp8_path,
+        gguf_path,
+        config=ORIG_REPO,
+        subfolder="transformer",
+        quantization_config=GGUFQuantizationConfig(compute_dtype=dtype),
         torch_dtype=dtype,
     )
 
+    # Components stay on CPU — main() uses enable_model_cpu_offload().
+    # GGUF transformer stays quantized in RAM, dequantized per-layer on GPU.
     pipe = QwenImageEditPlusPipeline(
         tokenizer=tokenizer,
         processor=processor,
@@ -153,8 +159,11 @@ def main():
                         help="Blend N intermediate frames between steps for smooth transitions")
     parser.add_argument("--device", default=None,
                         help="Force device: cuda, mps, or cpu (auto-detected if omitted)")
+    parser.add_argument("--quant", default="Q8_0",
+                        choices=["Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q8_0"],
+                        help="GGUF quantization (default: Q8_0 ~20GB; Q4_0 ~11GB)")
     parser.add_argument("--full-model", action="store_true",
-                        help="Download full BF16 model (~57GB) instead of FP8 (~37GB)")
+                        help="Download full BF16 model (~57GB) instead of GGUF (~38GB)")
     args = parser.parse_args()
 
     device = pick_device(args.device)
@@ -166,10 +175,12 @@ def main():
 
     if args.full_model:
         pipe = load_full_pipeline(dtype, device)
+        pipe.to(device)
     else:
-        pipe = load_fp8_pipeline(dtype, device)
+        pipe = load_gguf_pipeline(dtype, device, args.quant)
+        print("Enabling CPU offload (components swap in/out of VRAM)...")
+        pipe.enable_model_cpu_offload()
 
-    pipe.to(device)
     pipe.set_progress_bar_config(disable=None)
     print("Pipeline ready.\n")
 

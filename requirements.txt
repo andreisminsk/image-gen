@@ -10,3 +10,4 @@ imageio-ffmpeg
 scipy
 simple-lama-inpainting
 safetensors
+gguf

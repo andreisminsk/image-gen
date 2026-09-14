@@ -6,11 +6,11 @@ Three diffusion model pipelines for text-to-image, image-to-image, and object re
 
 Generate high-quality images using the [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) model with an optimized download strategy — **~14.5GB** instead of ~33GB.
 
-## 2. Qwen-Image-Edit-2511 — Image-to-Image (FP8, ~37GB)
+## 2. Qwen-Image-Edit-2511 — Image-to-Image (GGUF, ~38GB)
 
 Restyle or transform an existing image using [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511). Provide a source image + a text instruction (e.g. *"turn it into a watercolor painting"*) and the model regenerates the image accordingly. Supports multiple input images for compositing.
 
-Uses an [FP8-quantized transformer](https://huggingface.co/drbaph/Qwen-Image-Edit-2511-FP8) (~20GB) plus the original text encoder, VAE, tokenizer, and scheduler (~17GB) — **~37GB total** instead of ~57GB for the full BF16 model. Use `--full-model` to download the full BF16 version instead.
+Uses a [GGUF-quantized transformer](https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF) (Q8_0, ~20GB) plus the original text encoder, VAE, tokenizer, and scheduler (~17GB) — **~38GB total** instead of ~57GB for the full BF16 model. The transformer stays quantized in RAM and is dequantized per-layer on GPU, so it works with CPU offload on GPUs with limited VRAM. Use `--quant Q4_0` for a smaller download (~11GB transformer), or `--full-model` for the full BF16 version.
 
 ## How It Works
 
@@ -515,7 +515,7 @@ docker compose up -d
 docker compose exec image-gen image-gen "A cat on the moon" --seed 42
 ```
 
-The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~37GB for Qwen-Image-Edit). To pre-bake models into the image (~52GB larger), uncomment the pre-download section in the Dockerfile.
+The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~38GB for Qwen-Image-Edit). To pre-bake models into the image (~53GB larger), uncomment the pre-download section in the Dockerfile.
 
 CI builds and pushes to `ghcr.io/andreisminsk/image-gen` on every push to `main`.
 
@@ -556,7 +556,7 @@ The script:
 1. Installs system dependencies (ffmpeg)
 2. Sets up a conda env or venv
 3. Installs the `image-gen` package
-4. Pre-downloads all model weights (~52GB: Z-Image-Turbo FP8 + Qwen-Image-Edit-2511 FP8)
+4. Pre-downloads all model weights (~53GB: Z-Image-Turbo FP8 + Qwen-Image-Edit-2511 GGUF)
 
 Set `HF_TOKEN` before running for faster downloads:
 

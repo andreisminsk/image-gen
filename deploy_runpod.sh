@@ -94,11 +94,11 @@ FlowMatchEulerDiscreteScheduler.from_pretrained('Tongyi-MAI/Z-Image-Turbo', subf
 print('Z-Image-Turbo components downloaded.')
 "
 
-echo "  Downloading Qwen-Image-Edit-2511 FP8 transformer (~20GB)..."
+echo "  Downloading Qwen-Image-Edit-2511 GGUF transformer (Q8_0, ~20GB)..."
 ${PYTHON} -c "
 from huggingface_hub import hf_hub_download
-hf_hub_download('drbaph/Qwen-Image-Edit-2511-FP8', 'qwen_image_edit_2511_fp8_e4m3fn.safetensors')
-print('FP8 transformer downloaded.')
+hf_hub_download('unsloth/Qwen-Image-Edit-2511-GGUF', 'qwen-image-edit-2511-Q8_0.gguf')
+print('GGUF transformer downloaded.')
 "
 
 echo "  Downloading Qwen-Image-Edit-2511 components (text encoder, VAE, tokenizer ~17GB)..."
@@ -132,7 +132,7 @@ echo ""
 echo "  Text-to-image with animation:"
 echo "    image-gen-anim 'A cat astronaut on the moon' --seed 42 --output output.png --animation animation.mp4"
 echo ""
-echo "  Image-to-image restyling (FP8, ~37GB):"
+echo "  Image-to-image restyling (GGUF Q8_0, ~38GB):"
 echo "    i2i-gen -i photo.jpg -p 'turn it into a watercolor painting' --seed 42"
 echo ""
 echo "  Image-to-image with animation:"
