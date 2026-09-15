@@ -203,23 +203,28 @@ def segment_sam(image: Image.Image, device: str = "cpu", point=None):
     inputs = processor(image, return_tensors="pt").to(device)
     h, w = image.size[1], image.size[0]
 
-    def _upscale(pred):
-        out = []
-        for m in pred:
-            up = F.interpolate(m[None, None].float(), size=(h, w),
-                               mode="bilinear", align_corners=False)
-            out.append(up[0, 0].cpu().numpy() > 0.5)
-        return out
-
     def segment_at(x, y):
         pts = torch.tensor([[[[x, y]]]], device=device)
         labels = torch.tensor([[[1]]], device=device)
         with torch.no_grad():
             o = model(**inputs, input_points=pts, input_labels=labels,
                       multimask_output=True)
-        pred = o.pred_masks[0, 0]
         ious = o.iou_scores.cpu().numpy().reshape(-1)
-        return _upscale(pred), ious
+        # Use processor's post_process_masks to correctly handle padding
+        # and resize masks back to the original image resolution.
+        masks = processor.image_processor.post_process_masks(
+            o.pred_masks.cpu(),
+            inputs["original_sizes"].cpu(),
+            inputs["reshaped_input_sizes"].cpu(),
+        )
+        out = []
+        for m in masks[0]:
+            arr = m.numpy()
+            # post_process_masks may return [1, H, W] or [H, W]
+            while arr.ndim > 2:
+                arr = arr[0]
+            out.append(arr > 0.5)
+        return out, ious
 
     if point is not None:
         x, y = point
@@ -288,11 +293,19 @@ def inpaint_sdxl(image: Image.Image, mask: np.ndarray, out_dir: Path,
 def inpaint_lama(image: Image.Image, mask: np.ndarray, out_dir: Path,
                  feather: int = 16, dilate: int = 10) -> None:
     """LaMa inpainting — fast, no hallucination."""
+    import torch
     from simple_lama_inpainting import SimpleLama
     from scipy import ndimage
 
     print(f"  LaMa inpainting (dilate={dilate}px, feather={feather}px) ...")
-    lama = SimpleLama()
+    # The LaMa TorchScript model ships with CUDA tensors embedded.
+    # Force CPU mapping at load time so it works on MPS-only machines.
+    _orig_jit_load = torch.jit.load
+    torch.jit.load = lambda *a, **kw: _orig_jit_load(*a, **{**kw, "map_location": "cpu"})
+    try:
+        lama = SimpleLama(device=torch.device("cpu"))
+    finally:
+        torch.jit.load = _orig_jit_load
 
     if dilate > 0:
         mask_dilated = ndimage.binary_dilation(mask, iterations=dilate)

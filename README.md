@@ -2,15 +2,470 @@
 
 Three diffusion model pipelines for text-to-image, image-to-image, and object removal on Apple Silicon (MPS), CUDA, or CPU.
 
-## 1. Z-Image-Turbo — Text-to-Image (FP8, ~14.5GB)
+## Tools Overview
+
+| Command | Model | What it does | Download |
+|---------|-------|-------------|----------|
+| `image-gen` | Z-Image-Turbo (FP8) | Text-to-image generation | ~14.5 GB |
+| `image-gen-anim` | Z-Image-Turbo (FP8) | Text-to-image + denoising animation MP4 | ~14.5 GB |
+| `i2i-gen` | Qwen-Image-Edit-2511 (GGUF) | Image-to-image restyling/editing | ~38 GB |
+| `i2i-gen-anim` | Qwen-Image-Edit-2511 (GGUF) | Image-to-image + denoising animation MP4 | ~38 GB |
+| `remove-object` | Mask R-CNN/SAM + SDXL/LaMa | Prompt-driven object removal | ~2–8 GB |
+
+All tools auto-detect CUDA → MPS → CPU and pick the appropriate dtype.
+
+## Quick Start
+
+```bash
+# 1. Create a virtual environment
+python -m venv venv
+source venv/bin/activate  # macOS/Linux
+# venv\Scripts\activate    # Windows
+
+# 2. Install PyTorch (macOS; for CUDA see Deployment below)
+pip install torch
+
+# 3. Install diffusers from source (includes ZImagePipeline)
+pip install git+https://github.com/huggingface/diffusers
+
+# 4. Install the toolkit
+pip install -e .
+
+# 5. Generate an image
+image-gen "A cat astronaut on the moon"
+
+# 6. Restyle a photo
+i2i-gen -i photo.png -p "turn it into a watercolor painting"
+
+# 7. Remove an object
+remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter lama
+```
+
+> **Why install diffusers from Git?** The `ZImagePipeline` class was recently merged but may not be in the latest PyPI release. Once it is, you can simply `pip install diffusers --upgrade`.
+
+## Deployment
+
+### Local Installation
+
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate    # Windows
+
+# Install PyTorch (adjust for your platform)
+# macOS:
+pip install torch
+# Linux/CUDA:
+# pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+# Install diffusers from source (includes ZImagePipeline)
+pip install git+https://github.com/huggingface/diffusers
+
+# Install remaining dependencies
+pip install transformers accelerate sentencepiece
+
+# Install the package
+pip install -e .
+```
+
+This installs five console commands: `image-gen`, `image-gen-anim`, `i2i-gen`, `i2i-gen-anim`, `remove-object`.
+
+You can also run modules directly without installing:
+
+```bash
+python -m image_gen.gen "A cat on the moon"
+python -m image_gen.remove -i photo.jpg -p "person" --inpaint
+```
+
+#### Proxy Scripts (optional)
+
+After `pip install -e .`, you can create shell proxy scripts in `~/.local/bin` so the commands are available without activating the venv:
+
+```bash
+# macOS / Linux
+./install.sh
+
+# Windows PowerShell
+./install.ps1
+```
+
+This creates wrapper scripts for all five commands that point to the venv executables. To remove them:
+
+```bash
+# macOS / Linux
+./uninstall.sh
+
+# Windows PowerShell
+./uninstall.ps1
+```
+
+### Docker
+
+A Docker image is available for CUDA GPU environments (RunPod, cloud instances, etc.):
+
+```bash
+# Build
+docker build -t ghcr.io/andreisminsk/image-gen:1.0.0-cu128 .
+
+# Run (GPU required)
+docker run --gpus all -v ./output:/app/output ghcr.io/andreisminsk/image-gen:1.0.0-cu128 \
+    image-gen "A cat astronaut on the moon" --seed 42
+
+# With HuggingFace token (optional — for higher download rate limits)
+docker run --gpus all -e HF_TOKEN=hf_xxx -v ./output:/app/output \
+    ghcr.io/andreisminsk/image-gen:1.0.0-cu128 image-gen "A cat on the moon"
+```
+
+Or with `docker-compose.yml`:
+
+```bash
+# Pass HF_TOKEN from your environment (optional)
+export HF_TOKEN=hf_xxx
+docker compose up -d
+docker compose exec image-gen image-gen "A cat on the moon" --seed 42
+```
+
+The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~38GB for Qwen-Image-Edit). To pre-bake models into the image (~53GB larger), uncomment the pre-download section in the Dockerfile.
+
+CI builds and pushes to `ghcr.io/andreisminsk/image-gen` on every push to `main`.
+
+### RunPod
+
+#### Option A: Docker Image
+
+Use the pre-built Docker image on a RunPod PyTorch pod:
+
+1. Deploy a RunPod pod with the PyTorch template (A100 40GB+ recommended)
+2. Pull and run the image:
+
+```bash
+docker run --gpus all -d \
+    -e HF_TOKEN=hf_xxx \
+    -v /app/output:/app/output \
+    -v hf-cache:/root/.cache/huggingface \
+    ghcr.io/andreisminsk/image-gen:1.0.0-cu128
+```
+
+3. SSH in and run commands:
+
+```bash
+image-gen "A cat astronaut on the moon" --seed 42
+scp root@<pod>:/app/output/output.png ./
+```
+
+#### Option B: Manual Setup (no Docker)
+
+Run `deploy_runpod.sh` on a fresh RunPod PyTorch pod to install everything from scratch:
+
+```bash
+git clone <repo-url> && cd image-gen
+bash deploy_runpod.sh
+```
+
+The script:
+1. Installs system dependencies (ffmpeg)
+2. Sets up a conda env or venv
+3. Installs the `image-gen` package
+4. Pre-downloads all model weights (~53GB: Z-Image-Turbo FP8 + Qwen-Image-Edit-2511 GGUF)
+
+Set `HF_TOKEN` before running for faster downloads:
+
+```bash
+export HF_TOKEN=hf_xxx
+bash deploy_runpod.sh
+```
+
+After setup, activate the environment and run:
+
+```bash
+conda activate image-gen   # or: source .venv/bin/activate
+image-gen "A cat astronaut on the moon" --seed 42
+```
+
+## Prerequisites
+
+- **Python 3.10+**
+- **NVIDIA GPU** (CUDA) or **Apple Silicon** (MPS) or **CPU** (very slow)
+- **Git** (for installing diffusers from source)
+
+### VRAM Requirements
+
+| Pipeline | VRAM (FP8) | VRAM (Full BF16) | Notes |
+|----------|-----------|-------------------|-------|
+| `image-gen` (Z-Image-Turbo) | ~10 GB | ~20 GB | 6B transformer + 3.4B text encoder |
+| `image-gen-anim` (Z-Image-Turbo) | ~10 GB | ~20 GB | Same + VAE decode per step |
+| `i2i-gen` (Qwen-Image-Edit-2511) | ~24 GB | ~40 GB | 20B transformer + 8B text encoder |
+| `i2i-gen-anim` (Qwen-Image-Edit-2511) | ~24 GB | ~40 GB | Same + VAE decode per step |
+| `remove-object` (SDXL inpainting) | ~8 GB | ~8 GB | SDXL inpainting model |
+| `remove-object` (LaMa inpainting) | ~2 GB | ~2 GB | Lightweight, no GPU needed |
+
+**Recommended GPUs:**
+- **FP8 text-to-image**: RTX 3090/4090 (24GB) or A10G (24GB)
+- **FP8 image-to-image**: RTX 3090/4090 (24GB) or A100 (40GB)
+- **Full BF16 image-to-image**: A100 (80GB) or 2× A100 (40GB)
+- **MPS (Apple Silicon)**: 32GB+ unified memory for text-to-image; image-to-image not recommended (loads as float32)
+
+## Text-to-Image: Z-Image-Turbo
 
 Generate high-quality images using the [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) model with an optimized download strategy — **~14.5GB** instead of ~33GB.
 
-## 2. Qwen-Image-Edit-2511 — Image-to-Image (GGUF, ~38GB)
+### Usage
+
+#### Basic (FP8, smaller download)
+
+```bash
+image-gen "A cat astronaut on the moon"
+```
+
+#### Full BF16 Model (33GB download, best quality)
+
+```bash
+image-gen "A cat astronaut on the moon" --full-model
+```
+
+#### With Options
+
+```bash
+image-gen "A sunset over mountains" \
+  --seed 123 \
+  --output sunset.png \
+  --width 768 \
+  --height 768 \
+  --steps 9
+```
+
+#### Animation (step-by-step denoising video)
+
+```bash
+pip install imageio imageio-ffmpeg  # extra dependency for video
+
+image-gen-anim "A cat astronaut on the moon"
+# Produces: output.png + animation.mp4
+
+# Customize animation:
+image-gen-anim "A sunset over mountains" \
+  --output sunset.png \
+  --animation sunset_anim.mp4 \
+  --fps 2
+```
+
+Each denoising step is shown for 1 second (adjustable with `--fps`). The animation reveals how the model progressively refines noise into a coherent image.
+
+### All Options — image-gen
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `prompt` | *(required)* | Text prompt for image generation |
+| `--negative-prompt` | `""` | Negative prompt (unused for Turbo) |
+| `--seed` | auto (datetime) | Random seed for reproducibility. Auto-generated from date/time if not specified. Pass the printed seed value to reproduce an image. |
+| `--height` | `1024` | Image height in pixels |
+| `--width` | `1024` | Image width in pixels |
+| `--steps` | `9` | Inference steps (9 = 8 DiT forwards) |
+| `--output` | `output.png` | Output file path |
+| `--device` | auto | Force device: `cuda`, `mps`, or `cpu` |
+| `--full-model` | `False` | Download full BF16 model (~33GB) instead of FP8 (~14.5GB) |
+
+#### How `--steps` Works
+
+The `--steps` parameter controls how many **denoising iterations** the diffusion process runs. The model starts from pure random noise and progressively removes noise over multiple steps — each step runs the transformer once to predict a cleaner version of the image. More steps = more refinement, but diminishing returns.
+
+**For Z-Image-Turbo specifically:**
+
+- The model was **distilled** to work optimally at **8 DiT forward passes**
+- The scheduler uses `num_inference_steps=9` internally, which equals **8 transformer calls + 1 initial noise step**
+- So `--steps 9` is the sweet spot — that's what the model was distilled for
+
+| `--steps` | Result |
+|-----------|--------|
+| 4-5 | Undercooked — blurry, missing details, may have artifacts |
+| **9** | **Optimal** — what the model was distilled for |
+| 15-20 | Slightly more refined, but marginal improvement |
+| 30+ | Wasted compute — no real quality gain, the model converges by step 9 |
+
+Fewer steps skip parts of the learned noise-to-image trajectory, producing incomplete images. More steps add diminishing refinement beyond what the model was trained for. Leave it at `9` unless experimenting.
+
+### All Options — image-gen-anim
+
+Same as `image-gen`, plus:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--animation` | `animation.mp4` | Output animation file path |
+| `--fps` | `1` | Frames per step (1 = 1 second per step, 2 = 0.5s per step) |
+| `--smooth N` | `0` | Blend N intermediate frames between each step for smooth transitions (pixel-space) |
+
+### CUDA-only Options
+
+| Flag | Description |
+|------|-------------|
+| `--fp8` | Enable torchao FP8 quantization at runtime (CUDA with compute ≥8.9 only) |
+
+## Image-to-Image: Qwen-Image-Edit-2511
 
 Restyle or transform an existing image using [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511). Provide a source image + a text instruction (e.g. *"turn it into a watercolor painting"*) and the model regenerates the image accordingly. Supports multiple input images for compositing.
 
 Uses a [GGUF-quantized transformer](https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF) (Q8_0, ~20GB) plus the original text encoder, VAE, tokenizer, and scheduler (~17GB) — **~38GB total** instead of ~57GB for the full BF16 model. The transformer stays quantized in RAM and is dequantized per-layer on GPU, so it works with CPU offload on GPUs with limited VRAM. Use `--quant Q4_0` for a smaller download (~11GB transformer), or `--full-model` for the full BF16 version.
+
+### Usage
+
+```bash
+# Basic restyle
+i2i-gen -i photo.png -p "turn it into a watercolor painting"
+
+# Multiple input images (compositing)
+i2i-gen -i bear1.png bear2.png -p "both bears facing each other in a park" -o merged.png
+
+# With animation
+pip install imageio imageio-ffmpeg
+i2i-gen-anim -i photo.png -p "make it anime style" --animation anim.mp4
+```
+
+### Options — i2i-gen
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i` / `--image` | *(required)* | One or more input image paths |
+| `-p` / `--prompt` | *(required)* | Editing/restyling instruction |
+| `-o` / `--output` | `output.png` | Output image path |
+| `--negative-prompt` | `" "` | Negative prompt — concepts to steer away from (see below) |
+| `--steps` | `20` | Inference steps (fewer = faster) |
+| `--cfg` | `4.0` | True CFG scale |
+| `--guidance-scale` | `1.0` | Guidance scale |
+| `--seed` | `0` | Random seed |
+| `--num-images` | `1` | Number of images to generate |
+| `--device` | auto | Force `cuda`, `mps`, or `cpu` |
+| `--quant` | `Q8_0` | GGUF quantization: `Q4_0`, `Q4_1`, `Q5_0`, `Q5_1`, `Q8_0` |
+| `--full-model` | `False` | Download full BF16 model (~57GB) instead of GGUF (~38GB) |
+
+### Options — i2i-gen-anim
+
+Same as `i2i-gen`, plus:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--animation` | `animation.mp4` | Output animation path |
+| `--fps` | `1` | Seconds per step (1 = 1s/step) |
+| `--intro N` | `10` | Cross-fade N frames from source image into first step (0 = disable) |
+| `--smooth N` | `0` | Blend N intermediate frames between steps |
+
+### How `--negative-prompt` Works
+
+With `--cfg` above 1 (default 4.0), the model runs each denoising step twice — once with your prompt, once with the negative prompt — then extrapolates *away* from the negative direction:
+
+```
+prediction = negative + cfg × (positive − negative)
+```
+
+The default `" "` (empty) just enables CFG without steering. Putting concepts in the negative prompt actively suppresses them:
+
+```bash
+i2i-gen -i photo.png -p "a pirate on a harbor dock" \
+  --negative-prompt "ships, boats, disproportionate ship, weapon, sword, gun, pistol, knife, holding weapon"
+```
+
+**Tips:**
+- List concrete nouns — "weapon" alone is vague; naming sword/gun/pistol works better
+- Higher `--cfg` (5–6) strengthens suppression but can add artifacts; lower (2–3) weakens it
+- Phrase the positive prompt affirmatively too: *"a pirate standing on a harbor dock, empty hands, calm sea in the background, no ships"*
+- Negative prompts steer rather than guarantee — combine both approaches for best results
+
+### How the Animation Works
+
+The script captures the **packed latent tensor** after each denoising step via the pipeline's `callback_on_step_end` hook. To turn each latent into a viewable frame, three conversions are needed:
+
+1. **Unpack** — the transformer operates on packed latents `[1, num_patches, channels×4]` (2×2 patches flattened into the sequence). `pipe._unpack_latents()` restores them to spatial form `[1, 16, 1, h, w]`.
+2. **Decode** — the VAE decoder converts latents to pixels. The Qwen-Image VAE is a 3D video-style VAE that expects 5D input and outputs 5D `(batch, channels, frames, h, w)` — the frames dimension is squeezed out.
+3. **Post-process** — normalize to `[0, 1]`, convert to uint8, and collect as a frame.
+
+**Important:** the pipeline resizes the input image to ~1024×1024 area internally (e.g. a 3904×5184 photo becomes 1184×896 latents). The unpack step must use these *pipeline* dimensions, not the original image dimensions, or the reshape will fail.
+
+The final decoded image is appended as the last frame, then all frames are written to MP4 with `imageio`. With `--smooth N`, pixel-space blend frames are interpolated between steps for a gradual transition effect.
+
+## Object Removal: Segment → Select → Inpaint
+
+### Overview
+
+`remove-object` removes unwanted objects from photos in three stages:
+
+1. **Segmentation** — detect object masks using Mask R-CNN (default, detects people) or SAM (point/grid prompts)
+2. **Mask selection** — pick the best mask via CLIP semantic matching, manual `--mask-index`, or area/IoU fallback
+3. **Inpainting** — fill the masked region using SDXL (context-aware, slower) or LaMa (fast, no hallucination)
+
+### Usage
+
+```bash
+# Dry run — detect and save the mask only (no inpainting)
+remove-object -i photo.jpg -p "man in blue"
+
+# Full removal with LaMa (fast, no hallucination)
+remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter lama
+
+# Full removal with SDXL (context-aware, slower)
+remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter sdxl
+
+# SAM with point prompt
+remove-object -i photo.jpg -p "person" --point 700,512 --inpaint
+
+# SDXL with custom fill prompt (describe what should replace the object)
+remove-object -i photo.jpg -p "man in blue" --inpaint --inpainter sdxl --inpaint-prompt "clear blue sky"
+```
+
+### How It Works
+
+**Segmentation** produces candidate masks:
+
+- **Mask R-CNN** (`--maskrcnn`, default) — detects COCO person instances. For small/distant figures where the mask misses limbs, it automatically fills the bounding box if mask coverage < 60%.
+- **SAM** (`--sam`) — Segment Anything Model. With `--point x,y`, segments the object near that point. Without a point, uses a 3×3 grid to auto-segment the scene.
+
+**Mask selection** picks the best candidate:
+
+- **CLIP** (default) — scores each masked region against the text prompt and picks the best semantic match. This ensures the mask corresponds to what you described, not just the largest object.
+- **`--mask-index N`** — manual override, pick the Nth mask directly.
+- **`--no-clip --prefer area|iou`** — skip CLIP and fall back to largest area or highest IoU.
+
+**Inpainting** fills the hole:
+
+- **SDXL** (`--inpainter sdxl`, default) — Stable Diffusion XL inpainting. Context-aware, can hallucinate realistic content. Use `--inpaint-prompt` to describe what should fill the hole (leave empty to infer from surroundings). ⚠️ Do **not** pass the removal prompt here — that would regenerate the object you're trying to remove.
+- **LaMa** (`--inpainter lama`) — Large Mask Inpainting. Fast, no hallucination, good for clean removals. Supports `--dilate` to expand the mask for better coverage.
+
+**Mask post-processing** — holes in the mask interior are filled via border flood-fill, and a red overlay preview is saved alongside the binary mask.
+
+### Options — remove-object
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i` / `--image` | *(required)* | Input image path |
+| `-p` / `--prompt` | *(required)* | Text description of object to remove |
+| `-o` / `--output` | *(input dir)* | Output directory |
+| `--point` | None | `x,y` point prompt for SAM |
+| `--mask-index` | None | Force a specific mask (0-based) |
+| `--max-dim` | `1024` | Downscale longest side |
+| `--no-clip` | `False` | Skip CLIP, use area/IoU fallback |
+| `--prefer` | `area` | Fallback mode: `area` or `iou` |
+| `--sam` | `False` | Use SAM instead of Mask R-CNN |
+| `--all-classes` | `False` | Mask R-CNN: detect all COCO classes |
+| `--inpaint` | `False` | Run inpainting after segmentation |
+| `--inpainter` | `sdxl` | Inpainting model: `sdxl` or `lama` |
+| `--inpaint-prompt` | `""` | What to fill the hole with (SDXL only) |
+| `--inpaint-model` | `diffusers/stable-diffusion-xl-1.0-inpainting-0.1` | SDXL model ID |
+| `--steps` | `30` | SDXL inference steps |
+| `--guidance-scale` | `3.0` | SDXL guidance scale |
+| `--feather` | `8` | Mask feather radius (px) |
+| `--dilate` | `10` | LaMa mask dilation (px) |
+| `--seed` | `42` | Random seed for SDXL |
+| `--device` | auto | Force `cuda`, `mps`, or `cpu` |
+
+## Files
+
+| File | Command | Description |
+|------|---------|-------------|
+| `src/image_gen/gen.py` | `image-gen` | Text-to-image generation (Z-Image-Turbo) |
+| `src/image_gen/gen_anim.py` | `image-gen-anim` | Text-to-image + denoising animation (Z-Image-Turbo) |
+| `src/image_gen/i2i.py` | `i2i-gen` | Image-to-image restyling (Qwen-Image-Edit-2511) |
+| `src/image_gen/i2i_anim.py` | `i2i-gen-anim` | Image-to-image + denoising animation (Qwen-Image-Edit-2511) |
+| `src/image_gen/remove.py` | `remove-object` | Prompt-driven object removal (segment → select → inpaint) |
+| `pyproject.toml` | | Package config and entry points |
+| `requirements.txt` | | Python dependencies (for pip install without package) |
 
 ## How It Works
 
@@ -168,422 +623,6 @@ The model uses a **single-stream DiT** (S3-DiT) architecture where text and imag
 - **CUDA**: Full pipeline on GPU. Use `--fp8` for FP8 quantization via torchao (requires compute capability ≥8.9).
 - **MPS/CPU**: Full pipeline loaded to device in float32 (~28GB). FP8 weights are cast to float32, so memory usage is similar to full model but download is ~14.5GB instead of ~33GB.
 
-## Prerequisites
-
-- **Python 3.10+**
-- **NVIDIA GPU** (CUDA) or **Apple Silicon** (MPS) or **CPU** (very slow)
-- **Git** (for installing diffusers from source)
-
-### VRAM Requirements
-
-| Pipeline | VRAM (FP8) | VRAM (Full BF16) | Notes |
-|----------|-----------|-------------------|-------|
-| `image-gen` (Z-Image-Turbo) | ~10 GB | ~20 GB | 6B transformer + 3.4B text encoder |
-| `image-gen-anim` (Z-Image-Turbo) | ~10 GB | ~20 GB | Same + VAE decode per step |
-| `i2i-gen` (Qwen-Image-Edit-2511) | ~24 GB | ~40 GB | 20B transformer + 8B text encoder |
-| `i2i-gen-anim` (Qwen-Image-Edit-2511) | ~24 GB | ~40 GB | Same + VAE decode per step |
-| `remove-object` (SDXL inpainting) | ~8 GB | ~8 GB | SDXL inpainting model |
-| `remove-object` (LaMa inpainting) | ~2 GB | ~2 GB | Lightweight, no GPU needed |
-
-**Recommended GPUs:**
-- **FP8 text-to-image**: RTX 3090/4090 (24GB) or A10G (24GB)
-- **FP8 image-to-image**: RTX 3090/4090 (24GB) or A100 (40GB)
-- **Full BF16 image-to-image**: A100 (80GB) or 2× A100 (40GB)
-- **MPS (Apple Silicon)**: 32GB+ unified memory for text-to-image; image-to-image not recommended (loads as float32)
-
-## Environment Setup
-
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# venv\Scripts\activate    # Windows
-
-# Install PyTorch (adjust for your platform)
-# macOS:
-pip install torch
-# Linux/CUDA:
-# pip install torch --index-url https://download.pytorch.org/whl/cu124
-
-# Install diffusers from source (includes ZImagePipeline)
-pip install git+https://github.com/huggingface/diffusers
-
-# Install remaining dependencies
-pip install transformers accelerate sentencepiece
-```
-
-> **Why install diffusers from Git?** The `ZImagePipeline` class was recently merged but may not be in the latest PyPI release. Once it is, you can simply `pip install diffusers --upgrade`.
-
-## Usage
-
-### Basic (FP8, smaller download)
-
-```bash
-image-gen "A cat astronaut on the moon"
-```
-
-### Full BF16 Model (33GB download, best quality)
-
-```bash
-image-gen "A cat astronaut on the moon" --full-model
-```
-
-### With Options
-
-```bash
-image-gen "A sunset over mountains" \
-  --seed 123 \
-  --output sunset.png \
-  --width 768 \
-  --height 768 \
-  --steps 9
-```
-
-### Animation (step-by-step denoising video)
-
-```bash
-pip install imageio imageio-ffmpeg  # extra dependency for video
-
-image-gen-anim "A cat astronaut on the moon"
-# Produces: output.png + animation.mp4
-
-# Customize animation:
-image-gen-anim "A sunset over mountains" \
-  --output sunset.png \
-  --animation sunset_anim.mp4 \
-  --fps 2
-```
-
-Each denoising step is shown for 1 second (adjustable with `--fps`). The animation reveals how the model progressively refines noise into a coherent image.
-
-### All Options — image-gen
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `prompt` | *(required)* | Text prompt for image generation |
-| `--negative-prompt` | `""` | Negative prompt (unused for Turbo) |
-| `--seed` | auto (datetime) | Random seed for reproducibility. Auto-generated from date/time if not specified. Pass the printed seed value to reproduce an image. |
-| `--height` | `1024` | Image height in pixels |
-| `--width` | `1024` | Image width in pixels |
-| `--steps` | `9` | Inference steps (9 = 8 DiT forwards) |
-
-#### How `--steps` Works
-
-The `--steps` parameter controls how many **denoising iterations** the diffusion process runs. The model starts from pure random noise and progressively removes noise over multiple steps — each step runs the transformer once to predict a cleaner version of the image. More steps = more refinement, but diminishing returns.
-
-**For Z-Image-Turbo specifically:**
-
-- The model was **distilled** to work optimally at **8 DiT forward passes**
-- The scheduler uses `num_inference_steps=9` internally, which equals **8 transformer calls + 1 initial noise step**
-- So `--steps 9` is the sweet spot — that's what the model was trained for
-
-| `--steps` | Result |
-|-----------|--------|
-| 4-5 | Undercooked — blurry, missing details, may have artifacts |
-| **9** | **Optimal** — what the model was distilled for |
-| 15-20 | Slightly more refined, but marginal improvement |
-| 30+ | Wasted compute — no real quality gain, the model converges by step 9 |
-
-Fewer steps skip parts of the learned noise-to-image trajectory, producing incomplete images. More steps add diminishing refinement beyond what the model was trained for. Leave it at `9` unless experimenting.
-| `--output` | `output.png` | Output file path |
-| `--device` | auto | Force device: `cuda`, `mps`, or `cpu` |
-| `--full-model` | `False` | Download full BF16 model (~33GB) instead of FP8 (~14.5GB) |
-
-### All Options — image-gen-anim
-
-Same as `image-gen`, plus:
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--animation` | `animation.mp4` | Output animation file path |
-| `--fps` | `1` | Frames per step (1 = 1 second per step, 2 = 0.5s per step) |
-| `--smooth N` | `0` | Blend N intermediate frames between each step for smooth transitions (pixel-space) |
-
-### CUDA-only Options
-
-| Flag | Description |
-|------|-------------|
-| `--fp8` | Enable torchao FP8 quantization at runtime (CUDA with compute ≥8.9 only) |
-
-## Image-to-Image: Qwen-Image-Edit-2511
-
-### Usage
-
-```bash
-# Basic restyle
-i2i-gen -i photo.png -p "turn it into a watercolor painting"
-
-# Multiple input images (compositing)
-i2i-gen -i bear1.png bear2.png -p "both bears facing each other in a park" -o merged.png
-
-# With animation
-pip install imageio imageio-ffmpeg
-i2i-gen-anim -i photo.png -p "make it anime style" --animation anim.mp4
-```
-
-### Options — i2i-gen
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-i` / `--image` | *(required)* | One or more input image paths |
-| `-p` / `--prompt` | *(required)* | Editing/restyling instruction |
-| `-o` / `--output` | `output.png` | Output image path |
-| `--negative-prompt` | `" "` | Negative prompt — concepts to steer away from (see below) |
-| `--steps` | `20` | Inference steps (fewer = faster) |
-| `--cfg` | `4.0` | True CFG scale |
-| `--guidance-scale` | `1.0` | Guidance scale |
-| `--seed` | `0` | Random seed |
-| `--num-images` | `1` | Number of images to generate |
-| `--device` | auto | Force `cuda`, `mps`, or `cpu` |
-
-### Options — i2i-gen-anim
-
-Same as `i2i-gen`, plus:
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--animation` | `animation.mp4` | Output animation path |
-| `--fps` | `1` | Seconds per step (1 = 1s/step) |
-| `--smooth N` | `0` | Blend N intermediate frames between steps |
-
-### How `--negative-prompt` Works
-
-With `--cfg` above 1 (default 4.0), the model runs each denoising step twice — once with your prompt, once with the negative prompt — then extrapolates *away* from the negative direction:
-
-```
-prediction = negative + cfg × (positive − negative)
-```
-
-The default `" "` (empty) just enables CFG without steering. Putting concepts in the negative prompt actively suppresses them:
-
-```bash
-i2i-gen -i photo.png -p "a pirate on a harbor dock" \
-  --negative-prompt "ships, boats, disproportionate ship, weapon, sword, gun, pistol, knife, holding weapon"
-```
-
-**Tips:**
-- List concrete nouns — "weapon" alone is vague; naming sword/gun/pistol works better
-- Higher `--cfg` (5–6) strengthens suppression but can add artifacts; lower (2–3) weakens it
-- Phrase the positive prompt affirmatively too: *"a pirate standing on a harbor dock, empty hands, calm sea in the background, no ships"*
-- Negative prompts steer rather than guarantee — combine both approaches for best results
-
-### How the Animation Works
-
-The script captures the **packed latent tensor** after each denoising step via the pipeline's `callback_on_step_end` hook. To turn each latent into a viewable frame, three conversions are needed:
-
-1. **Unpack** — the transformer operates on packed latents `[1, num_patches, channels×4]` (2×2 patches flattened into the sequence). `pipe._unpack_latents()` restores them to spatial form `[1, 16, 1, h, w]`.
-2. **Decode** — the VAE decoder converts latents to pixels. The Qwen-Image VAE is a 3D video-style VAE that expects 5D input and outputs 5D `(batch, channels, frames, h, w)` — the frames dimension is squeezed out.
-3. **Post-process** — normalize to `[0, 1]`, convert to uint8, and collect as a frame.
-
-**Important:** the pipeline resizes the input image to ~1024×1024 area internally (e.g. a 3904×5184 photo becomes 1184×896 latents). The unpack step must use these *pipeline* dimensions, not the original image dimensions, or the reshape will fail.
-
-The final decoded image is appended as the last frame, then all frames are written to MP4 with `imageio`. With `--smooth N`, pixel-space blend frames are interpolated between steps for a gradual transition effect.
-
-## Object Removal: Segment → Select → Inpaint
-
-### Overview
-
-`remove-object` removes unwanted objects from photos in three stages:
-
-1. **Segmentation** — detect object masks using Mask R-CNN (default, detects people) or SAM (point/grid prompts)
-2. **Mask selection** — pick the best mask via CLIP semantic matching, manual `--mask-index`, or area/IoU fallback
-3. **Inpainting** — fill the masked region using SDXL (context-aware, slower) or LaMa (fast, no hallucination)
-
-### Usage
-
-```bash
-# Dry run — detect and save the mask only (no inpainting)
-remove-object -i photo.jpg -p "man in blue"
-
-# Full removal with LaMa (fast, no hallucination)
-remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter lama
-
-# Full removal with SDXL (context-aware, slower)
-remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter sdxl
-
-# SAM with point prompt
-remove-object -i photo.jpg -p "person" --point 700,512 --inpaint
-
-# SDXL with custom fill prompt (describe what should replace the object)
-remove-object -i photo.jpg -p "man in blue" --inpaint --inpainter sdxl --inpaint-prompt "clear blue sky"
-```
-
-### How It Works
-
-**Segmentation** produces candidate masks:
-
-- **Mask R-CNN** (`--maskrcnn`, default) — detects COCO person instances. For small/distant figures where the mask misses limbs, it automatically fills the bounding box if mask coverage < 60%.
-- **SAM** (`--sam`) — Segment Anything Model. With `--point x,y`, segments the object near that point. Without a point, uses a 3×3 grid to auto-segment the scene.
-
-**Mask selection** picks the best candidate:
-
-- **CLIP** (default) — scores each masked region against the text prompt and picks the best semantic match. This ensures the mask corresponds to what you described, not just the largest object.
-- **`--mask-index N`** — manual override, pick the Nth mask directly.
-- **`--no-clip --prefer area|iou`** — skip CLIP and fall back to largest area or highest IoU.
-
-**Inpainting** fills the hole:
-
-- **SDXL** (`--inpainter sdxl`, default) — Stable Diffusion XL inpainting. Context-aware, can hallucinate realistic content. Use `--inpaint-prompt` to describe what should fill the hole (leave empty to infer from surroundings). ⚠️ Do **not** pass the removal prompt here — that would regenerate the object you're trying to remove.
-- **LaMa** (`--inpainter lama`) — Large Mask Inpainting. Fast, no hallucination, good for clean removals. Supports `--dilate` to expand the mask for better coverage.
-
-**Mask post-processing** — holes in the mask interior are filled via border flood-fill, and a red overlay preview is saved alongside the binary mask.
-
-### Options — remove-object
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-i` / `--image` | *(required)* | Input image path |
-| `-p` / `--prompt` | *(required)* | Text description of object to remove |
-| `-o` / `--output` | *(input dir)* | Output directory |
-| `--point` | None | `x,y` point prompt for SAM |
-| `--mask-index` | None | Force a specific mask (0-based) |
-| `--max-dim` | `1024` | Downscale longest side |
-| `--no-clip` | `False` | Skip CLIP, use area/IoU fallback |
-| `--prefer` | `area` | Fallback mode: `area` or `iou` |
-| `--sam` | `False` | Use SAM instead of Mask R-CNN |
-| `--all-classes` | `False` | Mask R-CNN: detect all COCO classes |
-| `--inpaint` | `False` | Run inpainting after segmentation |
-| `--inpainter` | `sdxl` | Inpainting model: `sdxl` or `lama` |
-| `--inpaint-prompt` | `""` | What to fill the hole with (SDXL only) |
-| `--inpaint-model` | `diffusers/stable-diffusion-xl-1.0-inpainting-0.1` | SDXL model ID |
-| `--steps` | `30` | SDXL inference steps |
-| `--guidance-scale` | `3.0` | SDXL guidance scale |
-| `--feather` | `8` | Mask feather radius (px) |
-| `--dilate` | `10` | LaMa mask dilation (px) |
-| `--seed` | `42` | Random seed for SDXL |
-| `--device` | auto | Force `cuda`, `mps`, or `cpu` |
-
-## Installation
-
-```bash
-pip install -e .
-```
-
-This installs five console commands: `image-gen`, `image-gen-anim`, `i2i-gen`, `i2i-gen-anim`, `remove-object`.
-
-You can also run modules directly without installing:
-
-```bash
-python -m image_gen.gen "A cat on the moon"
-python -m image_gen.remove -i photo.jpg -p "person" --inpaint
-```
-
-### Proxy Scripts (optional)
-
-After `pip install -e .`, you can create shell proxy scripts in `~/.local/bin` so the commands are available without activating the venv:
-
-```bash
-# macOS / Linux
-./install.sh
-
-# Windows PowerShell
-./install.ps1
-```
-
-This creates wrapper scripts for all five commands that point to the venv executables. To remove them:
-
-```bash
-# macOS / Linux
-./uninstall.sh
-
-# Windows PowerShell
-./uninstall.ps1
-```
-
-## Docker
-
-A Docker image is available for CUDA GPU environments (RunPod, cloud instances, etc.):
-
-```bash
-# Build
-docker build -t ghcr.io/andreisminsk/image-gen:1.0.0-cu128 .
-
-# Run (GPU required)
-docker run --gpus all -v ./output:/app/output ghcr.io/andreisminsk/image-gen:1.0.0-cu128 \
-    image-gen "A cat astronaut on the moon" --seed 42
-
-# With HuggingFace token (optional — for higher download rate limits)
-docker run --gpus all -e HF_TOKEN=hf_xxx -v ./output:/app/output \
-    ghcr.io/andreisminsk/image-gen:1.0.0-cu128 image-gen "A cat on the moon"
-```
-
-Or with `docker-compose.yml`:
-
-```bash
-# Pass HF_TOKEN from your environment (optional)
-export HF_TOKEN=hf_xxx
-docker compose up -d
-docker compose exec image-gen image-gen "A cat on the moon" --seed 42
-```
-
-The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~38GB for Qwen-Image-Edit). To pre-bake models into the image (~53GB larger), uncomment the pre-download section in the Dockerfile.
-
-CI builds and pushes to `ghcr.io/andreisminsk/image-gen` on every push to `main`.
-
-## RunPod Deployment
-
-### Option A: Docker Image
-
-Use the pre-built Docker image on a RunPod PyTorch pod:
-
-1. Deploy a RunPod pod with the PyTorch template (A100 40GB+ recommended)
-2. Pull and run the image:
-
-```bash
-docker run --gpus all -d \
-    -e HF_TOKEN=hf_xxx \
-    -v /app/output:/app/output \
-    -v hf-cache:/root/.cache/huggingface \
-    ghcr.io/andreisminsk/image-gen:1.0.0-cu128
-```
-
-3. SSH in and run commands:
-
-```bash
-image-gen "A cat astronaut on the moon" --seed 42
-scp root@<pod>:/app/output/output.png ./
-```
-
-### Option B: Manual Setup (no Docker)
-
-Run `deploy_runpod.sh` on a fresh RunPod PyTorch pod to install everything from scratch:
-
-```bash
-git clone <repo-url> && cd image-gen
-bash deploy_runpod.sh
-```
-
-The script:
-1. Installs system dependencies (ffmpeg)
-2. Sets up a conda env or venv
-3. Installs the `image-gen` package
-4. Pre-downloads all model weights (~53GB: Z-Image-Turbo FP8 + Qwen-Image-Edit-2511 GGUF)
-
-Set `HF_TOKEN` before running for faster downloads:
-
-```bash
-export HF_TOKEN=hf_xxx
-bash deploy_runpod.sh
-```
-
-After setup, activate the environment and run:
-
-```bash
-conda activate image-gen   # or: source .venv/bin/activate
-image-gen "A cat astronaut on the moon" --seed 42
-```
-
-## Files
-
-| File | Command | Description |
-|------|---------|-------------|
-| `src/image_gen/gen.py` | `image-gen` | Text-to-image generation (Z-Image-Turbo) |
-| `src/image_gen/gen_anim.py` | `image-gen-anim` | Text-to-image + denoising animation (Z-Image-Turbo) |
-| `src/image_gen/i2i.py` | `i2i-gen` | Image-to-image restyling (Qwen-Image-Edit-2511) |
-| `src/image_gen/i2i_anim.py` | `i2i-gen-anim` | Image-to-image + denoising animation (Qwen-Image-Edit-2511) |
-| `src/image_gen/remove.py` | `remove-object` | Prompt-driven object removal (segment → select → inpaint) |
-| `pyproject.toml` | | Package config and entry points |
-| `requirements.txt` | | Python dependencies (for pip install without package) |
-
 ## Scaling Up
 
 | Goal | Change |
@@ -605,4 +644,36 @@ image-gen "A cat astronaut on the moon" --seed 42
 
 ## License
 
-This script is provided as-is. The Z-Image-Turbo model is licensed under [Apache 2.0](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo).
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+
+Copyright © Andrei Suvorov 2026
+
+This work is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
+
+You are free to:
+- **Share** — copy and redistribute the material in any medium or format
+- **Adapt** — remix, transform, and build upon the material
+
+Under the following terms:
+- **Attribution** — You must give appropriate credit, provide a link to the license, and indicate if changes were made.
+- **NonCommercial** — You may not use the material for commercial purposes.
+- **ShareAlike** — If you remix, transform, and build upon the material, you must distribute your contributions under the same license as the original.
+- **No additional restrictions** — You may not apply legal terms or technological measures that legally restrict others from doing anything the license permits.
+
+### Disclaimer of Warranties
+
+THIS WORK IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE WORK OR THE USE OR OTHER DEALINGS IN THE WORK.
+
+### Bundled Model Licenses
+
+The bundled models carry their own licenses:
+
+| Model | Used by | License |
+|-------|---------|--------|
+| [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) | `image-gen`, `image-gen-anim` | Apache 2.0 |
+| [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) | `i2i-gen`, `i2i-gen-anim` | Apache 2.0 |
+| [Segment Anything (SAM)](https://github.com/facebookresearch/segment-anything) | `remove-object` (`--sam`) | Apache 2.0 |
+| [LaMa / big-lama](https://github.com/advimman/lama) | `remove-object` (`--inpainter lama`) | Apache 2.0 |
+| [CLIP ViT-B/32](https://huggingface.co/openai/clip-vit-base-patch32) | `remove-object` (mask selection) | MIT |
+| Mask R-CNN (torchvision) | `remove-object` (default segmenter) | BSD-3-Clause (PyTorch) |
+| [SDXL Inpainting](https://huggingface.co/diffusers/stable-diffusion-xl-1.0-inpainting-0.1) | `remove-object` (`--inpainter sdxl`) | CreativeML Open RAIL++-M |
