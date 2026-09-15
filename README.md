@@ -127,6 +127,12 @@ docker compose exec image-gen image-gen "A cat on the moon" --seed 42
 
 The image is based on RunPod's PyTorch base (CUDA 12.8, torch 2.8.0) and includes SSH for RunPod access. Models are downloaded on first run (~14.5GB for Z-Image-Turbo, ~38GB for Qwen-Image-Edit). To pre-bake models into the image (~53GB larger), uncomment the pre-download section in the Dockerfile.
 
+> **RunPod SSH workaround:** RunPod does not inject SSH public keys into custom Docker images. Pass your public key(s) via the `SSH_PUBLIC_KEYS` environment variable — the entrypoint script writes them to `/root/.ssh/authorized_keys` at startup:
+> ```bash
+> docker run --gpus all -e SSH_PUBLIC_KEYS="ssh-ed25519 AAAA... user@host" ...
+> ```
+> Multiple keys can be passed newline-separated.
+
 CI builds and pushes to `ghcr.io/andreisminsk/image-gen` on every push to `main`.
 
 ### RunPod
@@ -141,6 +147,7 @@ Use the pre-built Docker image on a RunPod PyTorch pod:
 ```bash
 docker run --gpus all -d \
     -e HF_TOKEN=hf_xxx \
+    -e SSH_PUBLIC_KEYS="ssh-ed25519 AAAA... user@host" \
     -v /app/output:/app/output \
     -v hf-cache:/root/.cache/huggingface \
     ghcr.io/andreisminsk/image-gen:1.0.0-cu128

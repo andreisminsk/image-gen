@@ -51,9 +51,25 @@ ENV HF_HOME=/root/.cache/huggingface
 # Start SSH, then keep container alive
 # RunPod users SSH in and run: image-gen "prompt" ...
 # SCP is enabled for file transfer: scp root@<pod>:/app/output/image.png ./
+#
+# RunPod does not inject SSH public keys into custom Docker images.
+# Pass them via SSH_PUBLIC_KEYS env var (space or newline separated):
+#   docker run -e SSH_PUBLIC_KEYS="ssh-ed25519 AAAA... user@host" ...
+#   Multiple keys: separate with newlines in the env var.
 COPY <<'EOF' /app/entrypoint.sh
 #!/bin/bash
 set -e
+
+# Inject SSH public keys from SSH_PUBLIC_KEYS env var (RunPod workaround)
+if [ -n "${SSH_PUBLIC_KEYS}" ]; then
+  mkdir -p /root/.ssh
+  chmod 700 /root/.ssh
+  while IFS= read -r key; do
+    [ -n "$key" ] && echo "$key" >> /root/.ssh/authorized_keys
+  done <<< "${SSH_PUBLIC_KEYS}"
+  chmod 600 /root/.ssh/authorized_keys
+  echo "SSH public keys injected from SSH_PUBLIC_KEYS"
+fi
 
 # Start SSH server
 /usr/sbin/sshd
