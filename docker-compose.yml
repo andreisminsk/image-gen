@@ -10,6 +10,8 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       - HF_HUB_ENABLE_HF_TRANSFER=1
       - SSH_PUBLIC_KEYS=${SSH_PUBLIC_KEYS:-}
+    ports:
+      - "2222:22"  # SSH: ssh root@<host> -p 2222 (host 22 often taken by the pod's own sshd)
     volumes:
       - ./output:/app/output
       - hf-cache:/root/.cache/huggingface
