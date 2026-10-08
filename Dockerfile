@@ -75,8 +75,10 @@ if [ -n "${SSH_KEYS}" ]; then
   echo "SSH public keys injected"
 fi
 
-# Start SSH server
-/usr/sbin/sshd
+# Start SSH server (non-fatal: never kill the container over sshd)
+mkdir -p /run/sshd    # /run may be tmpfs-mounted, wiping the build-time dir
+ssh-keygen -A         # generate host keys if missing
+/usr/sbin/sshd || echo "WARNING: sshd failed to start"
 
 # Keep container alive
 exec "$@"
