@@ -121,6 +121,8 @@ Or with `docker-compose.yml`:
 ```bash
 # Pass HF_TOKEN from your environment (optional)
 export HF_TOKEN=hf_xxx
+# Optional: enable SSH access (entrypoint writes keys to /root/.ssh/authorized_keys)
+export SSH_PUBLIC_KEYS='ssh-ed25519 AAAA... user@host'
 docker compose up -d
 docker compose exec image-gen image-gen "A cat on the moon" --seed 42
 ```

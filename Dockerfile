@@ -53,7 +53,7 @@ ENV HF_HOME=/root/.cache/huggingface
 # SCP is enabled for file transfer: scp root@<pod>:/app/output/image.png ./
 #
 # RunPod does not inject SSH public keys into custom Docker images.
-# Pass them via SSH_PUBLIC_KEYS env var (space or newline separated):
+# Pass them via SSH_PUBLIC_KEYS env var (newline separated):
 #   docker run -e SSH_PUBLIC_KEYS="ssh-ed25519 AAAA... user@host" ...
 #   Multiple keys: separate with newlines in the env var.
 COPY <<'EOF' /app/entrypoint.sh
@@ -64,6 +64,7 @@ set -e
 if [ -n "${SSH_PUBLIC_KEYS}" ]; then
   mkdir -p /root/.ssh
   chmod 700 /root/.ssh
+  : > /root/.ssh/authorized_keys
   while IFS= read -r key; do
     [ -n "$key" ] && echo "$key" >> /root/.ssh/authorized_keys
   done <<< "${SSH_PUBLIC_KEYS}"
