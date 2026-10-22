@@ -7,7 +7,7 @@
   "jobs": [
     {
       "output_file": "cat-astronaut.png",
-      "prompt": "A cat astronaut on the moon",
+      "prompt": "A cat riding a horse",
       "seed": 42
     },
     {
