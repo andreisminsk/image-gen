@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "defaults": {
+    "command": "image-gen",
+    "output_dir": "output"
+  },
+  "jobs": [
+    {
+      "output_file": "cat-astronaut.png",
+      "prompt": "A cat astronaut on the moon",
+      "seed": 42
+    },
+    {
+      "output_file": "sunset-mountains.png",
+      "prompt": "A sunset over mountains, golden light",
+      "width": 768,
+      "height": 768
+    },
+    {
+      "output_file": "watercolor-city.png",
+      "prompt": "A city skyline in watercolor style, soft pastel colors",
+      "steps": 9
+    }
+  ]
+}

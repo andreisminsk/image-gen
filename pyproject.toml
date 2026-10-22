@@ -31,6 +31,7 @@ image-gen-anim = "image_gen.gen_anim:main"
 i2i-gen = "image_gen.i2i:main"
 i2i-gen-anim = "image_gen.i2i_anim:main"
 remove-object = "image_gen.remove:main"
+image-gen-batch = "image_gen.batch:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -43,6 +43,88 @@ remove-object -i photo.jpg -p "man in blue" --mask-index 0 --inpaint --inpainter
 
 > **Why install diffusers from Git?** The `ZImagePipeline` class was recently merged but may not be in the latest PyPI release. Once it is, you can simply `pip install diffusers --upgrade`.
 
+## Batch processing
+
+Run many generation jobs with a single pipeline load. The model (~14.5GB for
+Z-Image-Turbo, ~38GB for Qwen-Image-Edit) is loaded **once** and reused across
+all jobs — a 10-image session skips 9 model loads.
+
+```bash
+image-gen-batch --zip batch.zip -o output
+image-gen-batch --dir batch/            # unzipped, for local iteration
+image-gen-batch --dir batch/ --stop-on-error --report output/report.json
+```
+
+The batch source is a zip (or directory) containing `job.json` plus any
+referenced input images:
+
+```json
+{
+  "version": 1,
+  "defaults": { "command": "image-gen", "output_dir": "output" },
+  "jobs": [
+    { "output_file": "cat-astronaut.png", "prompt": "A cat astronaut on the moon", "seed": 42 },
+    { "output_file": "sunset.png", "prompt": "A sunset over mountains", "width": 768, "height": 768 }
+  ]
+}
+```
+
+For image editing, set `"command": "i2i-gen"` in `defaults` and give each job an
+`image` (path or array of paths, relative to the batch root):
+
+```json
+{
+  "version": 1,
+  "defaults": { "command": "i2i-gen" },
+  "jobs": [
+    { "output_file": "watercolor.png", "image": "photo.png", "prompt": "turn it into a watercolor painting" }
+  ]
+}
+```
+
+| Field | Where | Description |
+|-------|-------|-------------|
+| `command` | defaults only | `image-gen` (t2i) or `i2i-gen` (edit) — one pipeline per batch |
+| `output_dir` | defaults only | Batch output directory (default `output`) |
+| `device` | defaults only | `cuda`, `mps`, `cpu` (default: auto) |
+| `full_model`, `quant` | defaults only | Model loading (same as `--full-model` / `--quant`) |
+| `steps`, `cfg`, `guidance_scale`, `negative_prompt`, `width`, `height`, `num_images` | defaults + jobs | Same meaning as the single-image commands |
+| `output_file` | jobs, required | `[A-Za-z0-9_-]+.png`, must be unique |
+| `prompt` | jobs, required | Generation prompt / edit instruction |
+| `image` | i2i jobs | Input image path(s) relative to the batch root |
+| `seed` | jobs | Auto-assigned random seed if missing (recorded in the report) |
+
+**Behavior:**
+- All validation (schema, file existence, duplicate names) runs **before** model load — exit code 2 on errors
+- Per-job failures are isolated and recorded; the batch continues (exit 1 if any failed, 0 if all succeeded)
+- `torch.cuda.empty_cache()` between jobs; aborts after 3 consecutive CUDA OOMs
+- `batch_report.json` with per-job status, seed, output paths, and duration is written even on Ctrl+C
+
+### One-command remote batch (RunPod)
+
+`scripts/runpod_remote_batch.py` runs a whole batch session on RunPod from your
+local machine — deploy (or start) a pod, upload the batch, generate, download
+results, and tear down the pod, with cost guardrails:
+
+```bash
+export RUNPOD_API_KEY=...   # https://www.runpod.io/console/user/settings
+
+python scripts/runpod_remote_batch.py --balance-only
+python scripts/runpod_remote_batch.py batch.zip
+python scripts/runpod_remote_batch.py batch_dir/ --yes --pod-id <pod-id>
+python scripts/runpod_remote_batch.py batch.zip --no-terminate   # stop, keep for reuse
+```
+
+- Zips a batch directory on the fly, uploads via scp, runs `image-gen-batch` (streamed),
+  downloads `output/` locally
+- Picks the cheapest GPU with ≥ `--vram` GB (default 24, confirm or `--yes`);
+  `--community` for cheaper interruptible cloud
+- **Always** terminates the pod at the end (even on Ctrl+C) — `--no-terminate`
+  stops it for reuse via `--pod-id`; `--keep-pod` leaves it running (billed hourly!)
+- Prints balance before/after with an independent GPU cost estimate, billing-lag aware
+- Requires `ssh`/`scp` in PATH (built into Win11/macOS/Linux) and the
+  `image-gen1.0.0-cu128` pod template (override with `--template`/`--template-id`)
+
 ## Deployment
 
 ### Local Installation
@@ -473,6 +555,7 @@ remove-object -i photo.jpg -p "man in blue" --inpaint --inpainter sdxl --inpaint
 | `src/image_gen/i2i.py` | `i2i-gen` | Image-to-image restyling (Qwen-Image-Edit-2511) |
 | `src/image_gen/i2i_anim.py` | `i2i-gen-anim` | Image-to-image + denoising animation (Qwen-Image-Edit-2511) |
 | `src/image_gen/remove.py` | `remove-object` | Prompt-driven object removal (segment → select → inpaint) |
+| `src/image_gen/batch.py` | `image-gen-batch` | Batch processing: many jobs, one pipeline load |
 | `pyproject.toml` | | Package config and entry points |
 | `requirements.txt` | | Python dependencies (for pip install without package) |
 
