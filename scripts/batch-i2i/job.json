@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "defaults": {
+    "command": "i2i-gen",
+    "output_dir": "output",
+    "steps": 20,
+    "cfg": 4.0
+  },
+  "jobs": [
+    {
+      "output_file": "watercolor.png",
+      "image": "photo.jpg",
+      "prompt": "turn it into a watercolor painting, soft pastel colors"
+    },
+    {
+      "output_file": "anime.png",
+      "image": "photo2.jpg",
+      "prompt": "make it anime style, clean line art",
+      "negative_prompt": "blurry, low quality, distorted face"
+    },
+    {
+      "output_file": "winter.png",
+      "image": "photo3.jpg",
+      "prompt": "the same scene in winter, snow covering everything, overcast light",
+      "seed": 123
+    }
+  ]
+}
