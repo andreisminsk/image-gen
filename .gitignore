@@ -24,6 +24,7 @@ env/
 # --- Generated pipeline outputs ---
 output.jpg
 out_clean/
+output-*/
 *.inpainted.png
 *.mask.png
 *.masked_preview.png
